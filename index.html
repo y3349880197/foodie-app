@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- v6.20260728 fix: login tabbar hidden, persistent session, no scroll -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -28,6 +29,7 @@ body{
 }
 .app{width:100%;max-width:450px;min-height:100vh;background:var(--c-bg);position:relative}
 .screen{display:none;min-height:100vh;padding-bottom:120px}
+#screen-login{padding-bottom:0;overflow:hidden}
 .screen.active{display:block}
 .tab-page{display:none;min-height:100vh;padding-bottom:120px}
 .tab-page.active{display:block}
@@ -593,6 +595,9 @@ async function doLogin() {
     return;
   }
 
+  // Persist session for long-term auto-login
+  if (authData && authData.session) saveSessionBackup(authData.session);
+
   // Get profile by email — use .select() with limit instead of maybeSingle to avoid
   // silent null returns when RLS blocks authenticated role
   let { data: profs, error: profErr } = await sb.from('profiles').select('*').eq('email', email);
@@ -646,12 +651,15 @@ async function doLogin() {
   state.activeTab = 'home';
   document.getElementById('screen-login').classList.remove('active');
   document.getElementById('screen-main').classList.add('active');
+  document.getElementById('tabbar').style.display = 'flex';
+  document.body.style.overflow = '';
   renderAll();
   requestNotifyPermission();
 }
 
 async function doLogout() {
   await sb.auth.signOut();
+  clearSessionBackup();
   state.currentUser = null;
   state.recipes = []; state.categories = []; state.friends = []; state.messages = []; state.requests = [];
   state.activeCategory = '全部'; state.activeTab = 'home'; state.msgFilter = 'all';
@@ -663,6 +671,8 @@ async function doLogout() {
   document.getElementById('cat-bar').innerHTML = '';
   document.getElementById('screen-main').classList.remove('active');
   document.getElementById('screen-login').classList.add('active');
+  document.getElementById('tabbar').style.display = 'none';
+  document.body.style.overflow = 'hidden';
   document.getElementById('login-email').value = '';
   document.getElementById('login-pass').value = '';
   document.getElementById('login-error').classList.add('hidden');
@@ -1364,6 +1374,11 @@ function updateBadge() {
 function switchScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
+  // Tabbar is fixed-position; show it only on main screen
+  const tabbar = document.getElementById('tabbar');
+  if (tabbar) tabbar.style.display = (id === 'screen-main') ? 'flex' : 'none';
+  // Lock scroll on login screen only; other screens may need scrolling
+  document.body.style.overflow = (id === 'screen-login') ? 'hidden' : '';
   if (id === 'screen-main') { renderAll(); updateBadge(); }
 }
 function switchTab(tab) {
@@ -1463,13 +1478,103 @@ function toast(msg) {
   setTimeout(() => t.classList.add('hidden'), 1800);
 }
 
+// ==================== SESSION BACKUP (survives aggressive storage cleanup) ====================
+const SESSION_BACKUP_KEY = 'foodie_session_backup';
+function saveSessionBackup(session) {
+  try { if (session) localStorage.setItem(SESSION_BACKUP_KEY, JSON.stringify(session)); }
+  catch(e) {}
+}
+function loadSessionBackup() {
+  try {
+    const raw = localStorage.getItem(SESSION_BACKUP_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch(e) { return null; }
+}
+function clearSessionBackup() {
+  try { localStorage.removeItem(SESSION_BACKUP_KEY); }
+  catch(e) {}
+}
+
 // ==================== INIT ====================
 (async function init() {
-  // Always show login page
+  // Try to restore existing session from localStorage
+  let { data: { session } } = await sb.auth.getSession();
+
+  // If Supabase's own storage was cleared (e.g. browser cleanup), try our backup
+  if (!session) {
+    const backup = loadSessionBackup();
+    if (backup && backup.refresh_token) {
+      try {
+        const { data: restored, error: restoreErr } = await sb.auth.setSession({
+          access_token: backup.access_token || '',
+          refresh_token: backup.refresh_token
+        });
+        if (!restoreErr && restored.session) session = restored.session;
+      } catch(e) {}
+    }
+  }
+  
+  // Session exists in storage — try to refresh the access token
+  // (access token expires in 1h, but refresh token lasts much longer)
+  if (session) {
+    try {
+      const { data: refreshed, error: refreshErr } = await sb.auth.refreshSession();
+      if (!refreshErr && refreshed.session) {
+        session = refreshed.session;
+      }
+    } catch(e) {
+      // Refresh failed silently — will try with the stored session below
+    }
+  }
+  
+  if (session && session.user) {
+    const email = session.user.email;
+    
+    // Try to load profile with current (possibly refreshed) session
+    let { data: profs, error: profErr } = await sb.from('profiles').select('*').eq('email', email);
+    
+    // If query failed due to auth, try one more refresh then retry
+    if (profErr) {
+      try {
+        const { data: refreshed } = await sb.auth.refreshSession();
+        if (refreshed.session) {
+          session = refreshed.session;
+          const retry = await sb.from('profiles').select('*').eq('email', email);
+          if (!retry.error) { profs = retry.data; profErr = null; }
+        }
+      } catch(e) {}
+    }
+    
+    if (!profErr && profs && profs.length > 0) {
+      const prof = profs[0];
+      const cu = { email, userId: prof.user_id, nickname: prof.nickname };
+      state.currentUser = cu;
+      
+      // Cache avatar
+      if (prof.avatar_data && !(await loadImage('avatar_' + prof.user_id))) {
+        await saveImage('avatar_' + prof.user_id, prof.avatar_data);
+      }
+      
+      await loadAllData();
+      state.activeCategory = '全部';
+      state.activeTab = 'home';
+      document.getElementById('screen-main').classList.add('active');
+      const tabbar = document.getElementById('tabbar');
+      if (tabbar) tabbar.style.display = 'flex';
+      document.body.style.overflow = '';
+      renderAll();
+      requestNotifyPermission();
+      saveSessionBackup(session);
+      return; // Auto-login success, skip login screen
+    }
+  }
+
+  // No valid session — show login page and hide tabbar
   document.getElementById('screen-login').classList.add('active');
   document.getElementById('screen-main').classList.remove('active');
-  // Sign out any stale session
-  await sb.auth.signOut().catch(() => {});
+  const tabbar = document.getElementById('tabbar');
+  if (tabbar) tabbar.style.display = 'none';
+  document.body.style.overflow = 'hidden';
 })();
 
 // Disable Service Worker
