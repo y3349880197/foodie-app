@@ -260,6 +260,7 @@ body{
         </div>
         <div style="font-size:17px;font-weight:700;margin-top:4px" id="profile-name"></div>
         <div class="profile-id">ID: <span id="profile-id"></span></div>
+        <button class="btn btn-outline btn-sm mt-16" onclick="openEditProfile()">✏️ 编辑资料</button>
         <div class="profile-stats">
           <div class="stat-item" onclick="switchTab('home')">
             <div class="stat-num" id="stat-recipes">0</div>
@@ -356,6 +357,27 @@ body{
     </div>
     <div class="cat-bar" id="fr-cat-bar"></div>
     <div class="container" id="fr-recipe-list"></div>
+  </div>
+
+  <!-- EDIT PROFILE SHEET -->
+  <div class="sheet-overlay hidden" id="edit-profile-sheet" onclick="closeEditProfile(event)">
+    <div class="sheet" onclick="event.stopPropagation()">
+      <div class="sheet-title">✏️ 编辑资料</div>
+      <div style="text-align:center;margin-bottom:12px">
+        <div class="profile-avatar" style="margin:0 auto 4px;cursor:pointer" onclick="document.getElementById('avatar-input').click()">
+          <img id="edit-avatar-preview" style="display:none">
+          <span class="avatar-text" id="edit-avatar-text">👤</span>
+          <div class="avatar-hint">更换头像</div>
+        </div>
+        <div style="font-size:11px;color:var(--c-text-light)">点击更换头像</div>
+      </div>
+      <div class="form-group">
+        <div class="form-label">昵称</div>
+        <input class="form-input" type="text" id="edit-nickname" placeholder="给自己起个名字">
+      </div>
+      <button class="btn btn-primary btn-block btn-lg" onclick="saveProfile()">保存</button>
+      <button class="btn btn-outline btn-block btn-sm mt-16" onclick="closeEditProfile()">取消</button>
+    </div>
   </div>
 
   <!-- ORDER SHEET -->
@@ -672,6 +694,7 @@ async function renderHome() {
         <span class="chip" style="padding:2px 8px;font-size:10px;margin-top:3px;display:inline-block">${r.category}</span>
       </div>
       <span class="recipe-arrow">›</span>
+      <span style="font-size:14px;margin-left:2px;color:#B5B0AA;cursor:pointer" onclick="event.stopPropagation();editRecipe(${r.id})" title="编辑">✏️</span>
     </div>`;
   }
   list.innerHTML = html;
@@ -1257,6 +1280,46 @@ async function renderProfile() {
   }
 }
 
+async function openEditProfile() {
+  if (!state.currentUser) return;
+  state.regAvatar = null;
+  document.getElementById('edit-nickname').value = state.currentUser.nickname;
+  const imgData = await loadImage('avatar_' + state.currentUser.userId);
+  const imgEl = document.getElementById('edit-avatar-preview');
+  const textEl = document.getElementById('edit-avatar-text');
+  if (imgData) {
+    imgEl.src = imgData; imgEl.style.display = ''; textEl.style.display = 'none';
+  } else {
+    imgEl.style.display = 'none'; textEl.style.display = ''; textEl.textContent = state.currentUser.nickname[0] || '👤';
+  }
+  document.getElementById('edit-profile-sheet').classList.remove('hidden');
+}
+
+function closeEditProfile(e) {
+  if (e && e.target !== document.getElementById('edit-profile-sheet')) return;
+  document.getElementById('edit-profile-sheet').classList.add('hidden');
+}
+
+async function saveProfile() {
+  const nick = document.getElementById('edit-nickname').value.trim();
+  if (!nick) { toast('昵称不能为空'); return; }
+  if (!state.currentUser) return;
+
+  const updateData = { nickname: nick };
+  if (state.regAvatar) {
+    updateData.avatar_data = state.regAvatar;
+    await saveImage('avatar_' + state.currentUser.userId, state.regAvatar);
+  }
+
+  const { error } = await sb.from('profiles').update(updateData).eq('user_id', state.currentUser.userId);
+  if (error) { toast('保存失败：' + error.message); return; }
+
+  state.currentUser.nickname = nick;
+  toast('资料已更新');
+  closeEditProfile();
+  renderProfile();
+}
+
 function updateBadge() {
   const badge = document.getElementById('msg-badge');
   const count = state.messages.length;
@@ -1299,16 +1362,32 @@ async function onAvatarPicked(e) {
   if (!file) return;
   try {
     const b64 = await resizeImage(file);
+    state.regAvatar = b64;
+
+    // Update edit profile panel if visible
+    const editPreview = document.getElementById('edit-avatar-preview');
+    const editText = document.getElementById('edit-avatar-text');
+    if (editPreview) {
+      editPreview.src = b64;
+      editPreview.style.display = '';
+      if (editText) editText.style.display = 'none';
+    }
+
+    // Update register panel if visible
+    const regPreview = document.getElementById('reg-avatar-preview');
+    const regText = document.getElementById('reg-avatar-text');
+    if (regPreview) {
+      regPreview.src = b64;
+      regPreview.style.display = '';
+      if (regText) regText.style.display = 'none';
+    }
+
+    // If logged in, update profile avatar immediately
     if (state.currentUser) {
       await saveImage('avatar_' + state.currentUser.userId, b64);
       await sb.from('profiles').update({ avatar_data: b64 }).eq('user_id', state.currentUser.userId);
-      toast('头像已更新');
       renderProfile();
     }
-    state.regAvatar = b64;
-    document.getElementById('reg-avatar-preview').src = b64;
-    document.getElementById('reg-avatar-preview').style.display = '';
-    document.getElementById('reg-avatar-text').style.display = 'none';
   } catch(err) { toast('图片处理失败'); }
   e.target.value = '';
 }
