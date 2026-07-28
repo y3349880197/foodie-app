@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v12.20260728 fix: form fields not lost on re-render, defaults, scroll to top after save -->
+<!-- v13.20260728 fix: supabase connection error handling, show meaningful error instead of empty -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -469,6 +469,7 @@ function resizeImage(file) {
 let state = {
   currentUser: null,
   recipes: [], categories: [], friends: [], messages: [], requests: [],
+  _apiError: null,
   activeTab: 'home', activeCategory: '全部', msgFilter: 'all',
   upId: null, upCoverImage: null, upCoverEmoji: '🍳', upCategory: '', upIngs: [{name:'',amount:''}], upSteps: [''],
   upName: '', upTime: '30', upDiff: '简单', upServ: '2人份',
@@ -489,6 +490,18 @@ async function loadAllData() {
       sb.from('friend_requests').select('*').or(`to_user_id.eq.${uid},from_user_id.eq.${uid}`).order('created_at',{ascending:false}),
       sb.from('messages').select('*').eq('user_id',uid).order('created_at',{ascending:false}).limit(100)
     ]);
+
+    // Check for Supabase connection errors (e.g. project paused)
+    const apiErrs = [r1.error, r2.error, r3.error, r4.error].filter(Boolean);
+    if (apiErrs.length > 0) {
+      const msgs = apiErrs.map(e => e.message||e.code||'unknown').join('; ');
+      state._apiError = msgs;
+      console.error('Supabase API errors:', apiErrs);
+      // Don't wipe existing data on transient failures
+      return;
+    }
+    state._apiError = null;
+
     state.recipes = (r1.data||[]).map(r => ({
       id: r.id, name: r.name, coverEmoji: '🍳', category: r.category,
       time: r.cook_time||'', difficulty: r.difficulty||'简单', servings: r.servings||'2人份',
@@ -513,6 +526,7 @@ async function loadAllData() {
       }
     }
   } catch(e) {
+    state._apiError = e.message || 'Network error';
     console.error('loadAllData error:', e);
   }
 }
@@ -730,6 +744,18 @@ async function renderHome() {
   ).join('');
   const filtered = state.activeCategory === '全部' ? state.recipes : state.recipes.filter(r => r.category === state.activeCategory);
   const list = document.getElementById('recipe-list');
+  if (state._apiError) {
+    list.innerHTML = `<div class="empty">
+      <div class="empty-icon">🔌</div>
+      <div class="empty-text">数据连接失败<br><span style="font-size:11px;color:var(--c-text-light)">${state._apiError}</span></div>
+      <button class="btn btn-primary" style="margin-top:12px" onclick="retryLoadData()">🔄 重试</button>
+      <div style="margin-top:8px;font-size:11px;color:var(--c-text-light)">
+        如持续失败，请检查 Supabase 项目是否被暂停<br>
+        <a href="https://supabase.com/dashboard" target="_blank" style="color:var(--c-primary)">前往 Supabase 控制台恢复</a>
+      </div>
+    </div>`;
+    return;
+  }
   if (filtered.length === 0) {
     list.innerHTML = '<div class="empty"><div class="empty-icon">🍳</div><div class="empty-text">还没有菜谱<br>点击右上角 ✚ 开始上传吧</div></div>';
     return;
@@ -1423,6 +1449,12 @@ function backToMain() { switchScreen('screen-main'); window.scrollTo({top: 0, be
 
 async function reloadState() {
   await loadAllData();
+}
+async function retryLoadData() {
+  toast('正在重试连接...');
+  await loadAllData();
+  renderAll();
+  if (!state._apiError) toast('数据加载成功！');
 }
 
 // ==================== AVATAR/COVER UPLOAD ====================
