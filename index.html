@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v13.20260728 fix: supabase connection error handling, show meaningful error instead of empty -->
+<!-- v14.20260728 fix: saveRecipe crash when supabase unavailable, local state first, try-catch prevent data wipe -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -1181,6 +1181,7 @@ function delUpStep(i) { if(state.upSteps.length<=1)return; state.upSteps.splice(
 function addUpStep() { state.upSteps.push(''); renderUploadForm(); }
 
 async function saveRecipe() {
+  const btn = document.getElementById('btn-save');
   const name = document.getElementById('up-name').value.trim();
   const time = document.getElementById('up-time').value;
   const diff = document.getElementById('up-diff').value.trim() || '简单';
@@ -1191,6 +1192,10 @@ async function saveRecipe() {
   if (ings.length === 0) { toast('请添加食材'); return; }
   const steps = state.upSteps.filter(s => s.trim());
   if (steps.length === 0) { toast('请添加步骤'); return; }
+
+  // Prevent double-submit and show loading
+  btn.disabled = true;
+  btn.textContent = state.upId ? '更新中...' : '发布中...';
 
   const rid = state.upId || Date.now();
   const recipeData = {
@@ -1203,33 +1208,71 @@ async function saveRecipe() {
     ingredients: ings, steps
   };
 
-  // Save locally cached image
-  if (state.upCoverImage) await saveImage('recipe_' + rid, state.upCoverImage);
+  try {
+    // Save image to IndexedDB (non-blocking for Supabase)
+    if (state.upCoverImage) await saveImage('recipe_' + rid, state.upCoverImage);
 
-  let error;
-  if (state.upId) {
-    const { error: e } = await sb.from('recipes').update(recipeData).eq('id', rid);
-    error = e;
-  } else {
-    const { error: e } = await sb.from('recipes').insert(recipeData);
-    error = e;
+    // Save to Supabase
+    let error;
+    if (state.upId) {
+      const { error: e } = await sb.from('recipes').update(recipeData).eq('id', rid);
+      error = e;
+    } else {
+      const { error: e } = await sb.from('recipes').insert(recipeData);
+      error = e;
+    }
+
+    if (error) {
+      toast('保存失败：' + error.message);
+      return;
+    }
+
+    // Immediately update local state (don't rely on server reload which might fail & wipe data)
+    const localRecipe = {
+      id: rid, name, coverEmoji: '🍳', category: state.upCategory,
+      time: time || '', difficulty: diff, servings: serv,
+      ingredients: ings, steps, coverImage: state.upCoverImage || null
+    };
+
+    if (state.upId) {
+      const idx = state.recipes.findIndex(r => String(r.id) === String(rid));
+      if (idx >= 0) state.recipes[idx] = localRecipe;
+      else state.recipes.unshift(localRecipe);
+    } else {
+      state.recipes.unshift(localRecipe);
+    }
+    state.categories = [...new Set(state.recipes.map(r => r.category))];
+
+    toast(state.upId ? '菜谱已更新' : '菜谱已发布');
+
+    // Try server refresh in background (non-critical, never clear data on failure)
+    try { await loadAllData(); } catch(e) { /* keep local state */ }
+
+    renderAll();
+    switchScreen('screen-main');
+    window.scrollTo({top: 0, behavior: 'smooth'});
+  } catch(e) {
+    console.error('saveRecipe error:', e);
+    toast('保存失败，请检查网络连接后重试');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = state.upId ? '保存修改' : '发布菜谱';
   }
-
-  if (error) { toast('保存失败：' + error.message); return; }
-
-  toast(state.upId ? '菜谱已更新' : '菜谱已发布');
-  await reloadState();
-  renderAll();
-  switchScreen('screen-main');
-  window.scrollTo({top: 0, behavior: 'smooth'});
 }
 
 async function deleteRecipe() {
   if (!state.upId) return;
-  await sb.from('recipes').delete().eq('id', state.upId);
-  await deleteImage('recipe_' + state.upId);
-  toast('菜谱已删除');
-  await reloadState();
+  try {
+    await sb.from('recipes').delete().eq('id', state.upId);
+    await deleteImage('recipe_' + state.upId);
+    // Remove from local state immediately
+    state.recipes = state.recipes.filter(r => String(r.id) !== String(state.upId));
+    state.categories = [...new Set(state.recipes.map(r => r.category))];
+    toast('菜谱已删除');
+    try { await loadAllData(); } catch(e) { /* keep local state */ }
+  } catch(e) {
+    toast('删除失败，请重试');
+  }
   renderAll();
   switchScreen('screen-main');
 }
@@ -1237,12 +1280,18 @@ async function deleteRecipe() {
 // ==================== FRIEND RECIPES ====================
 async function goFriendRecipes(fid, fname) {
   state.friendRecipesId = fid; state.friendRecipesName = fname; state.frActiveCat = '全部';
-  const { data } = await sb.from('recipes').select('*').eq('user_id', fid).order('created_at', { ascending: false });
-  state.frRecipes = (data || []).map(r => ({
-    id: r.id, name: r.name, coverEmoji: '🍳', category: r.category,
-    time: r.cook_time||'', difficulty: r.difficulty||'简单',
-    ingredients: r.ingredients||[], steps: r.steps||[], coverImage: r.cover_image||null
-  }));
+  try {
+    const { data, error } = await sb.from('recipes').select('*').eq('user_id', fid).order('created_at', { ascending: false });
+    if (error) { toast('加载好友菜谱失败'); state.frRecipes = []; state.frApiError = error.message; }
+    else { state.frRecipes = (data || []).map(r => ({
+      id: r.id, name: r.name, coverEmoji: '🍳', category: r.category,
+      time: r.cook_time||'', difficulty: r.difficulty||'简单',
+      ingredients: r.ingredients||[], steps: r.steps||[], coverImage: r.cover_image||null
+    })); state.frApiError = null; }
+  } catch(e) {
+    state.frRecipes = []; state.frApiError = e.message;
+    toast('网络异常，请重试');
+  }
   document.getElementById('fr-title').textContent = fname + ' 的菜谱';
   renderFriendRecipes();
   switchScreen('screen-friend-recipes');
