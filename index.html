@@ -597,6 +597,8 @@ async function doLogin() {
 
   // Persist session for long-term auto-login
   if (authData && authData.session) saveSessionBackup(authData.session);
+  // Save encrypted credentials for 30-day auto-login
+  saveCredentials(email, pass);
 
   // Get profile by email — use .select() with limit instead of maybeSingle to avoid
   // silent null returns when RLS blocks authenticated role
@@ -660,6 +662,7 @@ async function doLogin() {
 async function doLogout() {
   await sb.auth.signOut();
   clearSessionBackup();
+  clearCredentials();
   state.currentUser = null;
   state.recipes = []; state.categories = []; state.friends = []; state.messages = []; state.requests = [];
   state.activeCategory = '全部'; state.activeTab = 'home'; state.msgFilter = 'all';
@@ -1478,6 +1481,38 @@ function toast(msg) {
   setTimeout(() => t.classList.add('hidden'), 1800);
 }
 
+// ==================== LONG-TERM CREDENTIAL STORE (30-day auto-login) ====================
+const CREDS_KEY = 'foodie_longterm_auth';
+const CREDS_DURATION = 30 * 24 * 60 * 60 * 1000; // 30 days in ms
+
+function saveCredentials(email, password) {
+  try {
+    const data = btoa(unescape(encodeURIComponent(email + ':::' + password)));
+    const payload = { d: data, t: Date.now() };
+    localStorage.setItem(CREDS_KEY, JSON.stringify(payload));
+  } catch(e) {}
+}
+
+function getCredentials() {
+  try {
+    const raw = localStorage.getItem(CREDS_KEY);
+    if (!raw) return null;
+    const payload = JSON.parse(raw);
+    if (Date.now() - payload.t > CREDS_DURATION) {
+      clearCredentials();
+      return null;
+    }
+    const decoded = decodeURIComponent(escape(atob(payload.d)));
+    const sep = decoded.indexOf(':::');
+    if (sep < 0) return null;
+    return { email: decoded.substring(0, sep), password: decoded.substring(sep + 3) };
+  } catch(e) { return null; }
+}
+
+function clearCredentials() {
+  try { localStorage.removeItem(CREDS_KEY); } catch(e) {}
+}
+
 // ==================== SESSION BACKUP (survives aggressive storage cleanup) ====================
 const SESSION_BACKUP_KEY = 'foodie_session_backup';
 function saveSessionBackup(session) {
@@ -1569,6 +1604,36 @@ function clearSessionBackup() {
     }
   }
 
+  // ===== LAST RESORT: silent re-login with stored credentials (30-day validity) =====
+  const creds = getCredentials();
+  if (creds) {
+    const { data: reAuth, error: reErr } = await sb.auth.signInWithPassword({ email: creds.email, password: creds.password });
+    if (!reErr && reAuth.session) {
+      saveSessionBackup(reAuth.session);
+      const email = creds.email;
+      let { data: profs } = await sb.from('profiles').select('*').eq('email', email);
+      if (profs && profs.length > 0) {
+        const prof = profs[0];
+        state.currentUser = { email, userId: prof.user_id, nickname: prof.nickname };
+        if (prof.avatar_data && !(await loadImage('avatar_' + prof.user_id))) {
+          await saveImage('avatar_' + prof.user_id, prof.avatar_data);
+        }
+        await loadAllData();
+        state.activeCategory = '全部';
+        state.activeTab = 'home';
+        document.getElementById('screen-main').classList.add('active');
+        const tb = document.getElementById('tabbar');
+        if (tb) tb.style.display = 'flex';
+        document.body.style.overflow = '';
+        renderAll();
+        requestNotifyPermission();
+        return;
+      }
+    }
+    // Credential re-login failed — credentials may be stale, clear them
+    clearCredentials();
+  }
+
   // No valid session — show login page and hide tabbar
   document.getElementById('screen-login').classList.add('active');
   document.getElementById('screen-main').classList.remove('active');
@@ -1576,6 +1641,16 @@ function clearSessionBackup() {
   if (tabbar) tabbar.style.display = 'none';
   document.body.style.overflow = 'hidden';
 })();
+
+// Auto-refresh session when user returns to this tab
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible' && state.currentUser) {
+    try {
+      const { data } = await sb.auth.refreshSession();
+      if (data && data.session) saveSessionBackup(data.session);
+    } catch(e) {}
+  }
+});
 
 // Disable Service Worker
 if ('serviceWorker' in navigator) {
