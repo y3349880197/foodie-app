@@ -1,0 +1,6 @@
+foodie-app/
+node_modules/
+.DS_Store
+__pycache__/
+*.pyc
+gen_icons.py

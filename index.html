@@ -1,0 +1,1369 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="今天吃什么">
+<meta name="theme-color" content="#FF6B35">
+<title>今天吃什么🤔</title>
+<link rel="manifest" href="manifest.json">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1/dist/umd/supabase.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --c-primary:#FF6B35;--c-primary-light:#FFF0E8;--c-bg:#F9F7F4;--c-card:#FFFFFF;
+  --c-text:#2C2C2C;--c-text-light:#8A8580;--c-border:#EFEAE2;
+  --c-green:#639922;--c-red:#E24B4A;--c-blue:#378ADD;
+  --shadow:0 2px 16px rgba(0,0,0,.06);--radius:20px
+}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  background:var(--c-bg);color:var(--c-text);font-size:14px;line-height:1.6;
+  -webkit-font-smoothing:antialiased;overflow-x:hidden;display:flex;justify-content:center;min-height:100vh
+}
+.app{width:100%;max-width:450px;min-height:100vh;background:var(--c-bg);position:relative}
+.screen{display:none;min-height:100vh;padding-bottom:120px}
+.screen.active{display:block}
+.tab-page{display:none;min-height:100vh;padding-bottom:120px}
+.tab-page.active{display:block}
+.hidden{display:none!important}
+
+/* Nav */
+.navbar{position:sticky;top:0;z-index:100;background:var(--c-bg);padding:12px 14px 8px;display:flex;align-items:center;justify-content:space-between;backdrop-filter:blur(10px)}
+.navbar h1{font-size:17px;font-weight:700}
+.nav-btn{width:32px;height:32px;border-radius:50%;background:var(--c-card);border:1px solid var(--c-border);display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;flex-shrink:0}
+.nav-btn:active{background:#f0f0f0}
+
+/* Login */
+.login-page{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:30px 20px}
+.login-logo{font-size:60px;margin-bottom:12px}
+.login-title{font-size:24px;font-weight:800;margin-bottom:6px}
+.login-subtitle{font-size:13px;color:var(--c-text-light);margin-bottom:24px;text-align:center}
+.form-group{width:100%;margin-bottom:12px}
+.form-label{font-size:13px;font-weight:600;margin-bottom:4px;color:var(--c-text)}
+.form-input{width:100%;padding:12px;border:1.5px solid var(--c-border);border-radius:var(--radius);font-size:14px;background:var(--c-card);outline:none;transition:border-color .2s}
+.form-input:focus{border-color:var(--c-primary)}
+.form-input::placeholder{color:#ccc}
+.btn{display:inline-flex;align-items:center;justify-content:center;border:none;border-radius:var(--radius);font-size:14px;font-weight:600;cursor:pointer;transition:all .2s}
+.btn:active{transform:scale(.97);opacity:.9}
+.btn-primary{background:var(--c-primary);color:#fff}
+.btn-outline{background:transparent;border:1.5px solid var(--c-primary);color:var(--c-primary)}
+.btn-block{width:100%}
+.btn-lg{padding:14px 20px;font-size:15px;border-radius:14px}
+.btn-sm{padding:8px 16px;font-size:12px;border-radius:8px}
+.btn-danger{background:var(--c-red);color:#fff}
+.toggle-link{font-size:13px;color:var(--c-primary);cursor:pointer;margin-top:8px;text-decoration:underline}
+.loading{text-align:center;padding:20px;color:var(--c-text-light);font-size:13px}
+
+/* Tab Bar */
+.tabbar{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:450px;background:var(--c-card);border-top:1px solid var(--c-border);display:flex;padding:6px 0 env(safe-area-inset-bottom);z-index:200}
+.tab-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:10px;color:var(--c-text-light);cursor:pointer;padding:4px 0}
+.tab-item.active{color:var(--c-primary)}
+.tab-item .icon{font-size:20px}
+.tab-item .badge{position:absolute;top:-1px;right:12px;min-width:14px;height:14px;background:var(--c-red);color:#fff;border-radius:7px;font-size:9px;display:flex;align-items:center;justify-content:center;padding:0 3px}
+.tab-item-wrap{position:relative}
+
+/* Content */
+.container{padding:0 14px}
+.mt-16{margin-top:8px}.mt-24{margin-top:12px}.mt-32{margin-top:16px}.mb-16{margin-bottom:8px}.mb-24{margin-bottom:12px}
+
+/* Category chips */
+.cat-bar{display:flex;gap:6px;overflow-x:auto;padding:8px 14px;-webkit-overflow-scrolling:touch}
+.cat-bar::-webkit-scrollbar{display:none}
+.chip{padding:6px 14px;border-radius:20px;font-size:12px;white-space:nowrap;background:var(--c-card);border:1px solid var(--c-border);cursor:pointer;transition:all .2s;flex-shrink:0}
+.chip.active{background:var(--c-primary);color:#fff;border-color:var(--c-primary)}
+
+/* Recipe card */
+.recipe-card{display:flex;align-items:center;background:var(--c-card);border-radius:var(--radius);padding:10px;margin-bottom:8px;cursor:pointer;box-shadow:var(--shadow);transition:transform .1s}
+.recipe-card:active{transform:scale(.98)}
+.recipe-cover{width:80px;height:80px;border-radius:12px;flex-shrink:0;overflow:hidden;background:#F1EFE8;display:flex;align-items:center;justify-content:center;font-size:40px}
+.recipe-cover img{width:100%;height:100%;object-fit:cover}
+.recipe-info{flex:1;margin-left:10px;min-width:0}
+.recipe-name{font-size:15px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.recipe-meta{font-size:11px;color:var(--c-text-light);margin-top:2px}
+.recipe-arrow{font-size:18px;color:#B5B0AA;margin-left:4px}
+
+/* Friend card */
+.friend-card{display:flex;align-items:center;background:var(--c-card);border-radius:var(--radius);padding:12px;margin-bottom:6px;cursor:pointer;box-shadow:var(--shadow)}
+.friend-card:active{transform:scale(.98)}
+.avatar{width:44px;height:44px;border-radius:50%;flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#fff}
+.avatar img{width:100%;height:100%;object-fit:cover}
+.avatar-sm{width:32px;height:32px;font-size:14px}
+
+/* Search */
+.search-bar{display:flex;gap:6px;padding:8px 14px 12px}
+
+/* Empty */
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:var(--c-text-light)}
+.empty-icon{font-size:50px;margin-bottom:10px}
+.empty-text{font-size:14px;text-align:center;line-height:1.8}
+
+/* Detail */
+.detail-cover{width:100%;height:220px;display:flex;align-items:center;justify-content:center;font-size:80px;background:#F1EFE8;overflow:hidden}
+.detail-cover img{width:100%;height:100%;object-fit:cover}
+.detail-header{padding:0 14px;margin-bottom:12px}
+.detail-name{font-size:20px;font-weight:700;margin-bottom:4px}
+.detail-meta{display:flex;gap:12px;font-size:12px;color:var(--c-text-light);flex-wrap:wrap;align-items:center}
+.detail-section{padding:12px 14px}
+.detail-section h3{font-size:14px;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:4px}
+.detail-section h3::before{content:'';width:3px;height:12px;background:var(--c-primary);border-radius:2px}
+.ingredient-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--c-border);font-size:13px}
+.ingredient-row:last-child{border-bottom:none}
+.step-item{display:flex;gap:8px;margin-bottom:10px;align-items:flex-start}
+.step-num{width:20px;height:20px;border-radius:50%;background:var(--c-primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}
+.step-text{font-size:13px;line-height:1.7;flex:1}
+
+/* Bottom bar */
+.bottom-bar{position:fixed;bottom:50px;left:50%;transform:translateX(-50%);width:100%;max-width:450px;padding:10px 14px calc(10px + env(safe-area-inset-bottom));z-index:150}
+.bottom-bar .btn-block{border-radius:14px;padding:14px;font-size:15px;box-shadow:0 4px 20px rgba(255,107,53,.3)}
+
+/* Modal / Sheet */
+.sheet-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:300;display:flex;align-items:flex-end;justify-content:center;animation:fadeIn .2s}
+.sheet{width:100%;max-width:450px;background:var(--c-card);border-radius:16px 16px 0 0;padding:16px 14px calc(16px + env(safe-area-inset-bottom));max-height:70vh;overflow-y:auto;animation:slideUp .25s}
+.sheet-title{font-size:16px;font-weight:700;text-align:center;margin-bottom:12px}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+
+/* Toast */
+.toast{position:fixed;top:40%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.8);color:#fff;padding:12px 24px;border-radius:8px;font-size:13px;z-index:999;pointer-events:none;animation:toastIn .3s}
+@keyframes toastIn{from{opacity:0;transform:translate(-50%,-50%) scale(.8)}to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
+
+/* Upload form */
+.cover-pick{display:flex;align-items:center;gap:10px;padding:12px;background:var(--c-card);border-radius:var(--radius);border:2px dashed var(--c-border);cursor:pointer;margin-bottom:12px;min-height:80px;position:relative;overflow:hidden}
+.cover-pick:active{background:#fafafa}
+.cover-pick img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;opacity:.6}
+.cover-pick.has-image img{opacity:.8}
+.cover-pick-icon{font-size:36px;position:relative;z-index:1}
+.cover-pick-label{color:var(--c-text-light);font-size:13px;position:relative;z-index:1}
+
+/* Message card */
+.msg-card{display:flex;align-items:flex-start;background:var(--c-card);border-radius:var(--radius);padding:12px;margin-bottom:6px;box-shadow:var(--shadow);gap:8px}
+.msg-body{flex:1;min-width:0}
+.msg-title{font-size:13px;margin-bottom:3px}
+.msg-desc{font-size:12px;color:var(--c-text-light);font-style:italic;margin-bottom:2px}
+.msg-time{font-size:11px;color:#B5B0AA}
+.msg-actions{display:flex;gap:6px;margin-top:6px}
+
+/* Profile */
+.profile-header{text-align:center;padding:24px 14px 16px}
+.profile-avatar{width:96px;height:96px;border-radius:50%;margin:0 auto 8px;cursor:pointer;overflow:hidden;position:relative;background:var(--c-primary);display:flex;align-items:center;justify-content:center;font-size:40px;color:#fff;flex-shrink:0}
+.profile-avatar img{width:100%;height:100%;object-fit:cover;position:absolute;top:0;left:0}
+.profile-avatar .avatar-text{position:relative;z-index:1}
+.profile-avatar .avatar-hint{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.5);color:#fff;font-size:10px;padding:3px 0;text-align:center;opacity:0;transition:opacity .2s;z-index:2}
+.profile-avatar:active .avatar-hint{opacity:1}
+.profile-id{font-size:12px;color:var(--c-text-light);margin-top:2px}
+.profile-stats{display:flex;justify-content:center;gap:30px;margin-top:12px}
+.stat-item{text-align:center;cursor:pointer}
+.stat-num{font-size:18px;font-weight:700;color:var(--c-primary)}
+.stat-label{font-size:11px;color:var(--c-text-light)}
+
+/* Settings */
+.setting-item{padding:14px 0;border-bottom:1px solid var(--c-border);display:flex;justify-content:space-between;align-items:center;cursor:pointer;font-size:14px}
+.setting-item:last-child{border-bottom:none}
+.setting-item:active{opacity:.7}
+.setting-arrow{color:#B5B0AA;font-size:16px}
+.setting-danger{color:var(--c-red)}
+
+/* Notification prompt */
+.notify-prompt{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:400;background:var(--c-primary);color:#fff;padding:10px 18px;border-radius:20px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 4px 20px rgba(255,107,53,.4);animation:slideDown .3s}
+@keyframes slideDown{from{transform:translateX(-50%) translateY(-100%)}to{transform:translateX(-50%) translateY(0)}}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- Hidden file inputs -->
+  <input type="file" id="avatar-input" accept="image/*" style="display:none" onchange="onAvatarPicked(event)">
+  <input type="file" id="cover-input" accept="image/*" style="display:none" onchange="onCoverPicked(event)">
+
+  <!-- LOGIN SCREEN -->
+  <div class="screen active" id="screen-login">
+    <div class="login-page" style="padding-top:60px">
+      <div class="login-logo">🍳</div>
+      <div class="login-title">今天吃什么🤔</div>
+      <div class="login-subtitle">和好友分享菜谱，互相点菜</div>
+      <div id="login-form">
+        <div class="form-group">
+          <div class="form-label">邮箱</div>
+          <input class="form-input" type="email" id="login-email" placeholder="请输入邮箱" autocomplete="email">
+        </div>
+        <div class="form-group">
+          <div class="form-label">密码</div>
+          <input class="form-input" type="password" id="login-pass" placeholder="请输入密码">
+        </div>
+        <button class="btn btn-primary btn-block btn-lg" id="btn-login" onclick="doLogin()">登录</button>
+      </div>
+      <div class="toggle-link" onclick="switchAuth('register')">还没有账号？点击注册</div>
+      <div id="register-form" class="hidden">
+        <div style="text-align:center;margin-bottom:12px">
+          <div class="profile-avatar" style="margin:0 auto 4px" onclick="document.getElementById('avatar-input').click()">
+            <img id="reg-avatar-preview" style="display:none">
+            <span class="avatar-text" id="reg-avatar-text">📷</span>
+            <div class="avatar-hint">设置头像</div>
+          </div>
+          <div style="font-size:11px;color:var(--c-text-light)">点击上传头像（选填）</div>
+        </div>
+        <div class="form-group">
+          <div class="form-label">昵称</div>
+          <input class="form-input" type="text" id="reg-nickname" placeholder="给自己起个名字">
+        </div>
+        <div class="form-group">
+          <div class="form-label">邮箱</div>
+          <input class="form-input" type="email" id="reg-email" placeholder="请输入邮箱" autocomplete="email">
+        </div>
+        <div class="form-group">
+          <div class="form-label">密码</div>
+          <input class="form-input" type="password" id="reg-pass" placeholder="设置密码（至少6位）">
+        </div>
+        <button class="btn btn-primary btn-block btn-lg" onclick="doRegister()">注册</button>
+        <div class="toggle-link" onclick="switchAuth('login')">已有账号？去登录</div>
+      </div>
+      <div id="login-error" class="hidden" style="color:var(--c-red);font-size:12px;margin-top:6px;text-align:center"></div>
+    </div>
+  </div>
+
+  <!-- MAIN APP -->
+  <div class="screen" id="screen-main">
+    <div class="tab-page active" id="page-home">
+      <div class="navbar">
+        <h1>📖 我的菜谱</h1>
+        <div class="nav-btn" onclick="goUpload()">✚</div>
+      </div>
+      <div class="cat-bar" id="cat-bar"></div>
+      <div class="container" id="recipe-list"></div>
+    </div>
+
+    <div class="tab-page" id="page-friends">
+      <div class="navbar"><h1>👥 好友</h1><div style="width:32px"></div></div>
+      <div class="search-bar">
+        <input class="form-input" style="flex:1" id="search-query" placeholder="输入好友ID搜索">
+        <button class="btn btn-primary btn-sm" onclick="searchUser()">搜索</button>
+      </div>
+      <div class="container" id="friend-search-result"></div>
+      <div class="container mt-24" id="friend-list-area"></div>
+    </div>
+
+    <div class="tab-page" id="page-messages">
+      <div class="navbar"><h1>💬 消息</h1><div style="width:32px"></div></div>
+      <div class="cat-bar" id="msg-filter-bar"></div>
+      <div class="container" id="msg-list"></div>
+    </div>
+
+    <div class="tab-page" id="page-profile">
+      <div class="profile-header">
+        <div class="profile-avatar" onclick="document.getElementById('avatar-input').click()">
+          <img id="profile-avatar-img" style="display:none">
+          <span class="avatar-text" id="profile-avatar-text">👤</span>
+          <div class="avatar-hint">更换头像</div>
+        </div>
+        <div style="font-size:17px;font-weight:700;margin-top:4px" id="profile-name"></div>
+        <div class="profile-id">ID: <span id="profile-id"></span></div>
+        <div class="profile-stats">
+          <div class="stat-item" onclick="switchTab('home')">
+            <div class="stat-num" id="stat-recipes">0</div>
+            <div class="stat-label">菜谱</div>
+          </div>
+          <div class="stat-item" onclick="switchTab('friends')">
+            <div class="stat-num" id="stat-friends">0</div>
+            <div class="stat-label">好友</div>
+          </div>
+        </div>
+      </div>
+      <div class="container">
+        <div class="setting-item" onclick="switchTab('home')"><span>📖 我的菜谱</span><span class="setting-arrow">›</span></div>
+        <div class="setting-item" onclick="switchTab('friends')"><span>👥 我的好友</span><span class="setting-arrow">›</span></div>
+        <div class="setting-item" onclick="goUpload()"><span>✚ 上传新菜谱</span><span class="setting-arrow">›</span></div>
+        <div class="setting-item setting-danger" onclick="doLogout()"><span>退出登录</span></div>
+      </div>
+    </div>
+
+    <div class="tabbar" id="tabbar">
+      <div class="tab-item active" data-tab="home" onclick="switchTab('home')">
+        <div class="tab-item-wrap"><span class="icon">📖</span></div><span>菜谱</span>
+      </div>
+      <div class="tab-item" data-tab="friends" onclick="switchTab('friends')">
+        <div class="tab-item-wrap"><span class="icon">👥</span></div><span>好友</span>
+      </div>
+      <div class="tab-item" data-tab="messages" onclick="switchTab('messages')">
+        <div class="tab-item-wrap"><span class="icon">💬</span><span class="badge hidden" id="msg-badge">0</span></div><span>消息</span>
+      </div>
+      <div class="tab-item" data-tab="profile" onclick="switchTab('profile')">
+        <div class="tab-item-wrap"><span class="icon">👤</span></div><span>我的</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- UPLOAD SCREEN -->
+  <div class="screen" id="screen-upload">
+    <div class="navbar">
+      <div class="nav-btn" onclick="backToMain()">←</div>
+      <h1 id="upload-title">上传菜谱</h1>
+      <div style="width:32px"></div>
+    </div>
+    <div class="container" style="padding-top:8px">
+      <div class="cover-pick" id="cover-pick" onclick="pickCoverImage()">
+        <img id="cover-preview-img" style="display:none">
+        <span class="cover-pick-icon" id="cover-preview-emoji">🍳</span>
+        <span class="cover-pick-label">点击上传菜品图片</span>
+      </div>
+      <div class="form-group"><div class="form-label">菜名</div><input class="form-input" id="up-name" placeholder="给这道菜起个名字"></div>
+      <div class="form-group">
+        <div class="form-label">分类</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px" id="up-cats"></div>
+        <div style="display:flex;gap:6px">
+          <input class="form-input" style="flex:1" id="up-newcat" placeholder="新建分类...">
+          <button class="btn btn-outline btn-sm" onclick="addUpCategory()">+ 新建</button>
+        </div>
+      </div>
+      <div class="form-group" style="display:flex;gap:6px">
+        <div style="flex:1"><div class="form-label">时长(分钟)</div><input class="form-input" type="number" id="up-time" placeholder="如 30"></div>
+        <div style="flex:1"><div class="form-label">难度</div><input class="form-input" id="up-diff" placeholder="简单/中等/困难"></div>
+        <div style="flex:1"><div class="form-label">份量</div><input class="form-input" id="up-serv" placeholder="2人份"></div>
+      </div>
+      <div class="form-group">
+        <div class="form-label">食材清单</div>
+        <div id="up-ings"></div>
+        <button class="btn btn-outline btn-block btn-sm" onclick="addUpIng()">+ 添加食材</button>
+      </div>
+      <div class="form-group">
+        <div class="form-label">做法步骤</div>
+        <div id="up-steps"></div>
+        <button class="btn btn-outline btn-block btn-sm" onclick="addUpStep()">+ 添加步骤</button>
+      </div>
+      <button class="btn btn-primary btn-block btn-lg mb-24" id="btn-save" onclick="saveRecipe()">发布菜谱</button>
+      <button class="btn btn-danger btn-block btn-sm hidden mb-24" id="btn-delete" onclick="deleteRecipe()">删除这道菜</button>
+    </div>
+  </div>
+
+  <!-- DETAIL SCREEN -->
+  <div class="screen" id="screen-detail">
+    <div class="navbar">
+      <div class="nav-btn" onclick="backFromDetail()">←</div>
+      <h1>菜谱详情</h1>
+      <div style="width:32px"></div>
+    </div>
+    <div id="detail-content"></div>
+  </div>
+
+  <!-- FRIEND RECIPES SCREEN -->
+  <div class="screen" id="screen-friend-recipes">
+    <div class="navbar">
+      <div class="nav-btn" onclick="backFromFriendRecipes()">←</div>
+      <h1 id="fr-title">好友的菜谱</h1>
+      <div style="width:32px"></div>
+    </div>
+    <div class="cat-bar" id="fr-cat-bar"></div>
+    <div class="container" id="fr-recipe-list"></div>
+  </div>
+
+  <!-- ORDER SHEET -->
+  <div class="sheet-overlay hidden" id="order-sheet" onclick="closeOrderSheet(event)">
+    <div class="sheet" onclick="event.stopPropagation()">
+      <div class="sheet-title">🍽 点这道菜</div>
+      <div id="order-recipe-name" style="font-weight:700;margin-bottom:8px;font-size:14px"></div>
+      <div class="form-group">
+        <div class="form-label">给好友留言（选填）</div>
+        <textarea class="form-input" id="order-msg" placeholder="比如：周末做给我吃嘛~" rows="3" style="resize:none;padding:10px"></textarea>
+      </div>
+      <button class="btn btn-primary btn-block btn-lg" onclick="confirmOrder()">发送心愿卡</button>
+      <button class="btn btn-outline btn-block btn-sm mt-16" onclick="closeOrderSheet()">取消</button>
+    </div>
+  </div>
+
+  <div class="toast hidden" id="toast"></div>
+</div>
+
+<script>
+// ==================== SUPABASE INIT ====================
+const sb = supabase.createClient(
+  'https://gqujsggtunjirneyvyzr.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdxdWpzZ2d0dW5qaXJuZXl2eXpyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUyMDQ3ODAsImV4cCI6MjEwMDc4MDc4MH0.5L5h2GAWWy2iLQBpoJpg_UIDsTUaVVvniDU-StecAvY'
+);
+
+// ==================== INDEXEDDB FOR IMAGES (local cache) ====================
+const DB_NAME = 'foodie_images_v2', DB_VER = 1;
+let _db = null;
+function idb() {
+  if (_db) return _db;
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = e => { e.target.result.createObjectStore('images'); };
+    req.onsuccess = e => { _db = e.target.result; resolve(_db); };
+    req.onerror = e => reject(e.target.error);
+  });
+}
+async function saveImage(key, base64) {
+  const db = await idb();
+  return new Promise(r => { const t = db.transaction('images','readwrite'); t.objectStore('images').put(base64,key); t.oncomplete=r; });
+}
+async function loadImage(key) {
+  const db = await idb();
+  return new Promise(r => { const t = db.transaction('images','readonly'); const q=t.objectStore('images').get(key); q.onsuccess=()=>r(q.result||null); });
+}
+async function deleteImage(key) {
+  const db = await idb();
+  return new Promise(r => { const t = db.transaction('images','readwrite'); t.objectStore('images').delete(key); t.oncomplete=r; });
+}
+function resizeImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        const maxSize = 512;
+        let w = img.width, h = img.height;
+        if (w > h && w > maxSize) { h = h * maxSize / w; w = maxSize; }
+        else if (h > maxSize) { w = w * maxSize / h; h = maxSize; }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.75));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// ==================== STATE ====================
+let state = {
+  currentUser: null,
+  recipes: [], categories: [], friends: [], messages: [], requests: [],
+  activeTab: 'home', activeCategory: '全部', msgFilter: 'all',
+  upId: null, upCoverImage: null, upCoverEmoji: '🍳', upCategory: '', upIngs: [{name:'',amount:''}], upSteps: [''],
+  detailRecipe: null, detailSource: null, detailFriendId: null,
+  friendRecipesId: null, friendRecipesName: null, frRecipes: [], frActiveCat: '全部',
+  orderingRecipe: null, orderingFriend: null, orderingFriendId: null,
+  regAvatar: null
+};
+
+// ==================== DATA LOADING ====================
+async function loadAllData() {
+  if (!state.currentUser) return;
+  const uid = state.currentUser.userId;
+  try {
+    const [r1, r2, r3, r4] = await Promise.all([
+      sb.from('recipes').select('*').eq('user_id',uid).order('created_at',{ascending:false}),
+      sb.from('friends').select('*').eq('user_id',uid),
+      sb.from('friend_requests').select('*').or(`to_user_id.eq.${uid},from_user_id.eq.${uid}`).order('created_at',{ascending:false}),
+      sb.from('messages').select('*').eq('user_id',uid).order('created_at',{ascending:false}).limit(100)
+    ]);
+    state.recipes = (r1.data||[]).map(r => ({
+      id: r.id, name: r.name, coverEmoji: '🍳', category: r.category,
+      time: r.cook_time||'', difficulty: r.difficulty||'简单', servings: r.servings||'2人份',
+      ingredients: r.ingredients||[], steps: r.steps||[], coverImage: r.cover_image||null
+    }));
+    state.categories = [...new Set(state.recipes.map(r => r.category))];
+    state.friends = (r2.data||[]).map(f => ({id: f.friend_id, name: f.friend_name}));
+    state.requests = (r3.data||[]).map(r => ({
+      id: r.id, type: r.to_user_id===uid?'received':'sent',
+      fromId: r.from_user_id, fromName: r.from_nickname,
+      toId: r.to_user_id, time: fmtTime(r.created_at), status: r.status
+    }));
+    state.messages = (r4.data||[]).map(m => ({
+      id: m.id, type: m.type, dir: m.dir, from: m.from_user, fromId: m.from_id,
+      to: m.to_user, toId: m.to_id, recipe: m.recipe_name, msg: m.message_text,
+      time: fmtTime(m.created_at), status: m.status
+    }));
+    // Cache recipe cover images in IndexedDB
+    for (const r of state.recipes) {
+      if (r.coverImage && !(await loadImage('recipe_' + r.id))) {
+        await saveImage('recipe_' + r.id, r.coverImage);
+      }
+    }
+  } catch(e) {
+    console.error('loadAllData error:', e);
+  }
+}
+
+function fmtTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const now = new Date();
+  const diff = now - d;
+  if (diff < 60000) return '刚刚';
+  if (diff < 3600000) return Math.floor(diff/60000)+'分钟前';
+  if (diff < 86400000) return Math.floor(diff/3600000)+'小时前';
+  return d.toLocaleDateString('zh-CN') + ' ' + d.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
+}
+
+// ==================== AUTH ====================
+function switchAuth(type) {
+  document.getElementById('login-error').classList.add('hidden');
+  if (type === 'register') {
+    document.getElementById('login-form').classList.add('hidden');
+    document.getElementById('register-form').classList.remove('hidden');
+  } else {
+    document.getElementById('login-form').classList.remove('hidden');
+    document.getElementById('register-form').classList.add('hidden');
+  }
+}
+
+function showError(msg) {
+  const el = document.getElementById('login-error');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+async function doRegister() {
+  const nick = document.getElementById('reg-nickname').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
+  const pass = document.getElementById('reg-pass').value;
+  if (!nick) { showError('请输入昵称'); return; }
+  if (!email || !email.includes('@')) { showError('请输入有效的邮箱地址'); return; }
+  if (!pass || pass.length < 6) { showError('密码至少6位'); return; }
+
+  // Check if email already exists in profiles
+  const { data: existing } = await sb.from('profiles').select('email').eq('email', email).maybeSingle();
+  if (existing) { showError('该邮箱已被注册'); return; }
+
+  // Supabase Auth signup
+  const { error: authErr } = await sb.auth.signUp({ email, password: pass });
+  if (authErr) {
+    if (authErr.message.includes('already registered') || authErr.message.includes('already exists')) {
+      showError('该邮箱已被注册');
+    } else {
+      showError('注册失败：' + authErr.message);
+    }
+    return;
+  }
+
+  // Create profile
+  const userId = 'U_' + Date.now().toString(36).toUpperCase();
+  const { error: profErr } = await sb.from('profiles').insert({
+    user_id: userId, email: email, nickname: nick
+  });
+  if (profErr) { showError('创建资料失败：' + profErr.message); return; }
+
+  // Save avatar
+  if (state.regAvatar) {
+    await saveImage('avatar_' + userId, state.regAvatar);
+    await sb.from('profiles').update({ avatar_data: state.regAvatar }).eq('user_id', userId);
+  }
+  state.regAvatar = null;
+
+  document.getElementById('login-email').value = email;
+  document.getElementById('login-pass').value = pass;
+  document.getElementById('reg-avatar-preview').style.display = 'none';
+  document.getElementById('reg-avatar-text').style.display = '';
+  showError('');
+  toast('注册成功！请登录');
+  switchAuth('login');
+}
+
+async function doLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const pass = document.getElementById('login-pass').value;
+  if (!email || !pass) { showError('请输入邮箱和密码'); return; }
+
+  const { data: authData, error: authErr } = await sb.auth.signInWithPassword({ email, password: pass });
+  if (authErr) {
+    if (authErr.message.includes('Invalid login')) showError('邮箱或密码错误');
+    else if (authErr.message.includes('Email not confirmed')) showError('请先确认邮箱（去Supabase后台关闭邮箱验证）');
+    else showError('登录失败：' + authErr.message);
+    return;
+  }
+
+  // Get profile
+  let { data: prof } = await sb.from('profiles').select('*').eq('email', email).maybeSingle();
+  if (!prof) {
+    // Auto-create profile if missing (e.g. registered before tables existed)
+    const userId = 'U_' + Date.now().toString(36).toUpperCase();
+    const nick = email.split('@')[0];
+    await sb.from('profiles').insert({ user_id: userId, email, nickname: nick });
+    prof = { user_id: userId, email, nickname: nick };
+  }
+
+  const cu = { email, userId: prof.user_id, nickname: prof.nickname };
+  state.currentUser = cu;
+
+  // Cache avatar
+  if (prof.avatar_data && !(await loadImage('avatar_' + prof.user_id))) {
+    await saveImage('avatar_' + prof.user_id, prof.avatar_data);
+  }
+
+  await loadAllData();
+  state.activeCategory = '全部';
+  state.activeTab = 'home';
+  document.getElementById('screen-login').classList.remove('active');
+  document.getElementById('screen-main').classList.add('active');
+  renderAll();
+  requestNotifyPermission();
+}
+
+async function doLogout() {
+  await sb.auth.signOut();
+  state.currentUser = null;
+  state.recipes = []; state.categories = []; state.friends = []; state.messages = []; state.requests = [];
+  state.activeCategory = '全部'; state.activeTab = 'home'; state.msgFilter = 'all';
+  document.getElementById('search-query').value = '';
+  document.getElementById('friend-search-result').innerHTML = '';
+  document.getElementById('friend-list-area').innerHTML = '';
+  document.getElementById('msg-list').innerHTML = '';
+  document.getElementById('recipe-list').innerHTML = '';
+  document.getElementById('cat-bar').innerHTML = '';
+  document.getElementById('screen-main').classList.remove('active');
+  document.getElementById('screen-login').classList.add('active');
+  document.getElementById('login-email').value = '';
+  document.getElementById('login-pass').value = '';
+  document.getElementById('login-error').classList.add('hidden');
+  updateBadge();
+}
+
+// ==================== NOTIFICATION ====================
+function requestNotifyPermission() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    setTimeout(() => {
+      const prompt = document.createElement('div');
+      prompt.className = 'notify-prompt';
+      prompt.textContent = '🔔 开启通知，好友点菜时提醒你';
+      prompt.onclick = () => { Notification.requestPermission(); prompt.remove(); };
+      document.body.appendChild(prompt);
+      setTimeout(() => { if(prompt.parentNode) prompt.remove(); }, 8000);
+    }, 2000);
+  }
+}
+function sendNotify(title, body) {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification(title, { body, icon: 'icon-192.png', tag: 'foodie-order' });
+  }
+}
+
+// ==================== RENDER ====================
+function renderAll() {
+  renderHome();
+  renderFriends();
+  renderMessages();
+  renderProfile();
+  renderTabBar();
+  updateBadge();
+}
+
+async function renderHome() {
+  const cats = ['全部', ...state.categories];
+  document.getElementById('cat-bar').innerHTML = cats.map(c =>
+    `<span class="chip ${state.activeCategory===c?'active':''}" onclick="setHomeCat('${c}')">${c}</span>`
+  ).join('');
+  const filtered = state.activeCategory === '全部' ? state.recipes : state.recipes.filter(r => r.category === state.activeCategory);
+  const list = document.getElementById('recipe-list');
+  if (filtered.length === 0) {
+    list.innerHTML = '<div class="empty"><div class="empty-icon">🍳</div><div class="empty-text">还没有菜谱<br>点击右上角 ✚ 开始上传吧</div></div>';
+    return;
+  }
+  const bgMap = { '荤菜':'#FAECE7','素菜':'#EAF3DE','甜品':'#FBEAF0','汤羹':'#FBE7D3','主食':'#F1EFE8' };
+  let html = '';
+  for (const r of filtered) {
+    let imgHTML = '';
+    if (r.coverImage) {
+      imgHTML = `<img src="${r.coverImage}" alt="">`;
+    } else {
+      const cached = await loadImage('recipe_' + r.id);
+      imgHTML = cached ? `<img src="${cached}" alt="">` : (r.coverEmoji||'🍳');
+    }
+    html += `<div class="recipe-card" onclick="goDetail(${r.id},'self')">
+      <div class="recipe-cover" style="background:${bgMap[r.category]||'#F1EFE8'}">${imgHTML}</div>
+      <div class="recipe-info">
+        <div class="recipe-name">${r.name}</div>
+        <div class="recipe-meta">⏱ ${r.time||'?'}分钟 · ${r.difficulty||'简单'} · ${r.servings||'2人份'}</div>
+        <span class="chip" style="padding:2px 8px;font-size:10px;margin-top:3px;display:inline-block">${r.category}</span>
+      </div>
+      <span class="recipe-arrow">›</span>
+    </div>`;
+  }
+  list.innerHTML = html;
+}
+
+function setHomeCat(cat) { state.activeCategory = cat; renderHome(); }
+
+// ==================== FRIENDS ====================
+function renderFriends() {
+  document.getElementById('friend-search-result').innerHTML = '';
+  const area = document.getElementById('friend-list-area');
+  const pendingReqs = state.requests.filter(r => r.type === 'received' && r.status === 'pending');
+  const friends = state.friends;
+
+  let html = '';
+  if (pendingReqs.length > 0) {
+    html += '<div class="form-label mb-16">🔔 好友请求 (' + pendingReqs.length + ')</div>';
+    const colors = ['#0F6E56','#D4537E','#378ADD','#BA7517','#6B3FA0'];
+    for (const req of pendingReqs) {
+      const clr = colors[req.fromId.length % 5];
+      html += `<div class="friend-card" style="cursor:default" data-req-fid="${req.fromId}">
+        <div class="avatar friend-avatar" style="background:${clr}" data-fid="${req.fromId}">
+          <span class="avatar-fallback">${req.fromName[0]}</span>
+        </div>
+        <div style="flex:1;margin-left:8px">
+          <div style="font-weight:600">${req.fromName}</div>
+          <div style="font-size:11px;color:var(--c-text-light)">想添加你为好友</div>
+        </div>
+        <div style="display:flex;gap:4px">
+          <button class="btn btn-primary btn-sm" onclick="event.stopPropagation();acceptFriendRequest(${req.id},'${req.fromId}','${req.fromName}')">同意</button>
+          <button class="btn btn-outline btn-sm" onclick="event.stopPropagation();rejectFriendRequest(${req.id},'${req.fromId}')">拒绝</button>
+        </div>
+      </div>`;
+    }
+    html += '<div style="height:12px"></div>';
+  }
+
+  if (friends.length === 0 && pendingReqs.length === 0) {
+    html += '<div class="empty"><div class="empty-icon">👥</div><div class="empty-text">还没有好友<br>用ID搜索添加好友吧</div></div>';
+  } else if (friends.length > 0) {
+    if (pendingReqs.length > 0) html += '<div class="form-label mb-16">我的好友 (' + friends.length + ')</div>';
+    const colors = ['#0F6E56','#D4537E','#378ADD','#BA7517','#6B3FA0'];
+    for (let i = 0; i < friends.length; i++) {
+      const f = friends[i];
+      html += `<div class="friend-card" onclick="goFriendRecipes('${f.id}','${f.name}')">
+        <div class="avatar friend-avatar" style="background:${colors[i%5]}" data-fid="${f.id}">
+          <span class="avatar-fallback">${f.name[0]}</span>
+        </div>
+        <div style="flex:1;margin-left:8px">
+          <div style="font-weight:600">${f.name}</div>
+          <div style="font-size:11px;color:var(--c-text-light)">ID: ${f.id}</div>
+        </div>
+        <span style="font-size:18px;color:#B5B0AA">›</span>
+      </div>`;
+    }
+  }
+  area.innerHTML = html;
+  setTimeout(() => loadFriendAvatars(), 0);
+}
+
+async function loadFriendAvatars() {
+  const avatars = document.querySelectorAll('.friend-avatar');
+  for (const av of avatars) {
+    const fid = av.dataset.fid;
+    if (fid) {
+      const imgData = await loadImage('avatar_' + fid);
+      if (imgData) {
+        const fb = av.querySelector('.avatar-fallback');
+        if (fb) fb.style.display = 'none';
+        av.innerHTML = `<img src="${imgData}" alt="" style="width:100%;height:100%;object-fit:cover">`;
+      }
+    }
+  }
+}
+
+async function searchUser() {
+  const q = document.getElementById('search-query').value.trim();
+  if (!q) { toast('请输入用户ID'); return; }
+  if (q === state.currentUser.userId) { toast('这是你自己的ID哦'); return; }
+
+  const { data: profiles } = await sb.from('profiles').select('*').eq('user_id', q);
+
+  const resultDiv = document.getElementById('friend-search-result');
+  if (!profiles || profiles.length === 0) {
+    resultDiv.innerHTML = '<div class="empty"><div class="empty-icon">🔍</div><div class="empty-text">未找到该用户<br>请确认ID是否正确</div></div>';
+    return;
+  }
+  const found = profiles[0];
+  
+  // Check current friend/request status
+  const isFriend = state.friends.some(f => f.id === q);
+  const sentReq = state.requests.some(r => r.type === 'sent' && r.toId === q && r.status === 'pending');
+  const receivedReq = state.requests.some(r => r.type === 'received' && r.fromId === q && r.status === 'pending');
+  const colors = ['#0F6E56','#D4537E','#378ADD','#BA7517','#6B3FA0'];
+  const clr = colors[q.length % 5];
+  const imgData = found.avatar_data || await loadImage('avatar_' + q);
+
+  let actionHTML;
+  if (isFriend) {
+    actionHTML = '<span style="color:var(--c-green);font-size:13px">已是好友</span>';
+  } else if (sentReq) {
+    actionHTML = '<span style="color:#BA7517;font-size:12px">已发送请求，等待同意</span>';
+  } else if (receivedReq) {
+    const req = state.requests.find(r => r.type === 'received' && r.fromId === q && r.status === 'pending');
+    actionHTML = `<div style="display:flex;gap:4px"><button class="btn btn-primary btn-sm" onclick="acceptFriendRequest(${req.id},'${q}','${found.nickname}')">同意</button><button class="btn btn-outline btn-sm" onclick="rejectFriendRequest(${req.id},'${q}')">拒绝</button></div>`;
+  } else {
+    actionHTML = `<button class="btn btn-primary btn-sm" onclick="sendFriendRequest('${q}','${found.nickname}')">加好友</button>`;
+  }
+
+  resultDiv.innerHTML = `
+    <div class="form-label mb-16">搜索结果</div>
+    <div class="friend-card" style="cursor:default">
+      <div class="avatar" style="background:${clr}">
+        ${imgData ? `<img src="${imgData}" alt="">` : found.nickname[0]}
+      </div>
+      <div style="flex:1;margin-left:8px">
+        <div style="font-weight:600">${found.nickname}</div>
+        <div style="font-size:11px;color:var(--c-text-light)">ID: ${found.user_id}</div>
+      </div>
+      ${actionHTML}
+    </div>`;
+}
+
+async function sendFriendRequest(fid, fname) {
+  if (state.friends.some(f => f.id === fid)) return;
+  if (state.requests.some(r => r.type === 'sent' && r.toId === fid && r.status === 'pending')) return;
+
+  const { error } = await sb.from('friend_requests').insert({
+    from_user_id: state.currentUser.userId,
+    from_nickname: state.currentUser.nickname,
+    to_user_id: fid,
+    status: 'pending'
+  });
+  if (error) { toast('发送失败：' + error.message); return; }
+
+  // Send message to target
+  await sb.from('messages').insert({
+    id: Date.now(),
+    user_id: fid,
+    type: 'friend_request',
+    from_user: state.currentUser.nickname,
+    from_id: state.currentUser.userId,
+    status: 'pending'
+  });
+
+  toast('好友请求已发送给 ' + fname + '，等待对方同意');
+  await reloadState();
+  renderAll();
+}
+
+async function acceptFriendRequest(reqId, fid, fname) {
+  // Update request status
+  await sb.from('friend_requests').update({ status: 'accepted' }).eq('id', reqId);
+
+  // Add friend for me
+  const { error: e1 } = await sb.from('friends').upsert({
+    user_id: state.currentUser.userId, friend_id: fid, friend_name: fname
+  }, { onConflict: 'user_id,friend_id' });
+  if (e1) console.error('add friend error', e1);
+
+  // Add friend for them (I become their friend)
+  await sb.from('friends').upsert({
+    user_id: fid, friend_id: state.currentUser.userId, friend_name: state.currentUser.nickname
+  }, { onConflict: 'user_id,friend_id' });
+
+  // Notify them
+  await sb.from('messages').insert({
+    id: Date.now(),
+    user_id: fid,
+    type: 'friend_accepted',
+    from_user: state.currentUser.nickname,
+    from_id: state.currentUser.userId
+  });
+
+  toast('已和 ' + fname + ' 成为好友！');
+  sendNotify('好友请求已通过', fname + ' 同意了你的好友请求');
+  await reloadState();
+  renderAll();
+}
+
+async function rejectFriendRequest(reqId, fid) {
+  await sb.from('friend_requests').update({ status: 'rejected' }).eq('id', reqId);
+  toast('已拒绝请求');
+  await reloadState();
+  renderAll();
+}
+
+// ==================== RECIPE DETAIL ====================
+async function goDetail(rid, source) {
+  let recipe;
+  if (source === 'self') {
+    recipe = state.recipes.find(r => String(r.id) === String(rid));
+    state.detailSource = 'self';
+  } else {
+    const f = state.friends.find(x => x.id === source);
+    state.detailSource = 'friend';
+    state.detailFriendId = source;
+    if (f && f._recipes) {
+      recipe = f._recipes.find(r => String(r.id) === String(rid));
+    }
+    // If we don't have cached recipes, need to fetch
+    if (!recipe) {
+      const { data } = await sb.from('recipes').select('*').eq('user_id', source);
+      const recipes = (data||[]).map(r => ({
+        id: r.id, name: r.name, coverEmoji: '🍳', category: r.category,
+        time: r.cook_time||'', difficulty: r.difficulty||'简单', servings: r.servings||'2人份',
+        ingredients: r.ingredients||[], steps: r.steps||[], coverImage: r.cover_image||null
+      }));
+      recipe = recipes.find(r => String(r.id) === String(rid));
+      // Cache in state
+      if (f) f._recipes = recipes;
+    }
+  }
+  if (!recipe) { toast('菜谱未找到'); return; }
+  state.detailRecipe = recipe;
+
+  const bgMap = { '荤菜':'#FAECE7','素菜':'#EAF3DE','甜品':'#FBEAF0','汤羹':'#FBE7D3','主食':'#F1EFE8' };
+  let imgSrc = '';
+  if (recipe.coverImage) {
+    imgSrc = recipe.coverImage;
+  } else {
+    const cached = await loadImage('recipe_' + recipe.id);
+    if (cached) imgSrc = cached;
+  }
+  const ingHTML = (recipe.ingredients||[]).map(i => 
+    `<div class="ingredient-row"><span>${typeof i==='object'?i.name:i}</span><span style="color:var(--c-text-light)">${typeof i==='object'?i.amount:''}</span></div>`
+  ).join('');
+  const stepHTML = (recipe.steps||[]).map((s,i) => `<div class="step-item"><div class="step-num">${i+1}</div><div class="step-text">${s}</div></div>`).join('');
+
+  document.getElementById('detail-content').innerHTML = `
+    <div class="detail-cover" style="background:${bgMap[recipe.category]||'#F1EFE8'}">
+      ${imgSrc ? `<img src="${imgSrc}" alt="">` : (recipe.coverEmoji||'🍳')}
+    </div>
+    <div class="detail-header">
+      <div class="detail-name">${recipe.name}</div>
+      <div class="detail-meta">
+        <span>⏱ ${recipe.time||'?'}分钟</span><span>${recipe.difficulty||'简单'}</span><span>${recipe.servings||'2人份'}</span>
+        <span class="chip" style="padding:2px 8px;font-size:10px">${recipe.category}</span>
+      </div>
+    </div>
+    <div class="detail-section"><h3>食材清单</h3>${ingHTML||'<div style="color:var(--c-text-light)">暂无食材</div>'}</div>
+    <div class="detail-section"><h3>做法步骤</h3>${stepHTML||'<div style="color:var(--c-text-light)">暂无步骤</div>'}</div>
+  `;
+
+  const old = document.getElementById('detail-bottom');
+  if (old) old.remove();
+  const barDiv = document.createElement('div');
+  barDiv.className = 'bottom-bar';
+  barDiv.id = 'detail-bottom';
+  if (source !== 'self') {
+    const f = state.friends.find(x => x.id === source);
+    barDiv.innerHTML = `<button class="btn btn-primary btn-block btn-lg" onclick="openOrderSheet(${recipe.id},'${f?f.name:'好友'}','${source}','${recipe.name}')">🍽 点这道菜</button>`;
+  } else {
+    barDiv.innerHTML = `<button class="btn btn-outline btn-block btn-lg" onclick="editRecipe(${recipe.id})">✏️ 编辑菜谱</button>`;
+  }
+  document.getElementById('screen-detail').appendChild(barDiv);
+  switchScreen('screen-detail');
+}
+
+function backFromDetail() {
+  const bar = document.getElementById('detail-bottom');
+  if (bar) bar.remove();
+  switchScreen('screen-main');
+}
+
+// ==================== ORDER ====================
+function openOrderSheet(rid, fname, fid, rname) {
+  state.orderingRecipe = rid; state.orderingFriend = fname; state.orderingFriendId = fid;
+  document.getElementById('order-recipe-name').textContent = '向 ' + fname + ' 点「' + rname + '」';
+  document.getElementById('order-msg').value = '';
+  document.getElementById('order-sheet').classList.remove('hidden');
+}
+function closeOrderSheet(e) {
+  if (e && e.target !== document.getElementById('order-sheet')) return;
+  document.getElementById('order-sheet').classList.add('hidden');
+}
+
+async function confirmOrder() {
+  const msg = document.getElementById('order-msg').value.trim() || '想吃！';
+  const fid = state.orderingFriendId;
+  const rname = document.getElementById('order-recipe-name').textContent.split('「')[1]?.replace('」','') || '';
+  const now = Date.now();
+
+  // Save to my messages
+  const { error: e1 } = await sb.from('messages').insert({
+    id: now, user_id: state.currentUser.userId,
+    type: 'order', dir: 'out',
+    from_user: state.currentUser.nickname, from_id: state.currentUser.userId,
+    to_user: state.orderingFriend, to_id: fid,
+    recipe_name: rname, message_text: msg
+  });
+  
+  // Save to friend's messages
+  await sb.from('messages').insert({
+    id: now + 1, user_id: fid,
+    type: 'order', dir: 'in',
+    from_user: state.currentUser.nickname, from_id: state.currentUser.userId,
+    to_user: state.orderingFriend, to_id: fid,
+    recipe_name: rname, message_text: msg
+  });
+
+  if (e1) { toast('发送失败：' + e1.message); return; }
+
+  toast('心愿卡已发送给 ' + state.orderingFriend + '！');
+  sendNotify('有人点菜啦！🍽', state.currentUser.nickname + ' 想让你做' + rname);
+  closeOrderSheet();
+  await reloadState();
+  renderMessages();
+  updateBadge();
+}
+
+// ==================== UPLOAD ====================
+function goUpload() {
+  state.upId = null; state.upCoverImage = null; state.upCoverEmoji = '🍳';
+  state.upCategory = state.categories[0] || '';
+  state.upIngs = [{name:'',amount:''}]; state.upSteps = [''];
+  document.getElementById('cover-preview-img').style.display = 'none';
+  document.getElementById('cover-preview-emoji').style.display = '';
+  document.getElementById('cover-preview-emoji').textContent = '🍳';
+  document.getElementById('cover-pick').classList.remove('has-image');
+  document.getElementById('upload-title').textContent = '上传菜谱';
+  document.getElementById('btn-delete').classList.add('hidden');
+  document.getElementById('btn-save').textContent = '发布菜谱';
+  renderUploadForm();
+  switchScreen('screen-upload');
+}
+
+async function editRecipe(rid) {
+  const recipe = state.recipes.find(r => String(r.id) === String(rid));
+  if (!recipe) return;
+  const bar = document.getElementById('detail-bottom');
+  if (bar) bar.remove();
+
+  state.upId = rid; state.upCoverImage = null; state.upCoverEmoji = recipe.coverEmoji || '🍳';
+  state.upCategory = recipe.category || '';
+  state.upIngs = (recipe.ingredients?.length) ? recipe.ingredients.map(i => ({name: i.name||i, amount: i.amount||''})) : [{name:'',amount:''}];
+  state.upSteps = (recipe.steps?.length) ? [...recipe.steps] : [''];
+
+  const cached = await loadImage('recipe_' + rid);
+  if (cached || recipe.coverImage) {
+    state.upCoverImage = recipe.coverImage || cached;
+    document.getElementById('cover-preview-img').src = state.upCoverImage;
+    document.getElementById('cover-preview-img').style.display = '';
+    document.getElementById('cover-preview-emoji').style.display = 'none';
+    document.getElementById('cover-pick').classList.add('has-image');
+  } else {
+    document.getElementById('cover-preview-img').style.display = 'none';
+    document.getElementById('cover-preview-emoji').style.display = '';
+    document.getElementById('cover-preview-emoji').textContent = state.upCoverEmoji;
+    document.getElementById('cover-pick').classList.remove('has-image');
+  }
+
+  document.getElementById('upload-title').textContent = '编辑菜谱';
+  document.getElementById('btn-delete').classList.remove('hidden');
+  document.getElementById('btn-save').textContent = '保存修改';
+  renderUploadForm();
+  switchScreen('screen-upload');
+}
+
+function renderUploadForm() {
+  const existing = state.upId ? (state.recipes.find(r => String(r.id) === String(state.upId)) || {}) : {};
+  document.getElementById('up-name').value = state.upId ? (existing.name||'') : '';
+  document.getElementById('up-time').value = state.upId ? (existing.time||'') : '';
+  document.getElementById('up-diff').value = state.upId ? (existing.difficulty||'') : '';
+  document.getElementById('up-serv').value = state.upId ? (existing.servings||'') : '';
+  document.getElementById('up-cats').innerHTML = state.categories.map(c =>
+    `<span class="chip ${state.upCategory===c?'active':''}" onclick="pickUpCat('${c}')">${c}</span>`
+  ).join('');
+  document.getElementById('up-ings').innerHTML = state.upIngs.map((ing,i) => `
+    <div style="display:flex;gap:5px;margin-bottom:5px">
+      <input class="form-input" style="flex:1" placeholder="食材名" value="${ing.name}" onchange="upIngChange(${i},'name',this.value)">
+      <input class="form-input" style="flex:1" placeholder="用量" value="${ing.amount}" onchange="upIngChange(${i},'amount',this.value)">
+      <span style="width:30px;height:36px;display:flex;align-items:center;justify-content:center;color:var(--c-red);font-size:18px;cursor:pointer" onclick="delUpIng(${i})">×</span>
+    </div>
+  `).join('');
+  document.getElementById('up-steps').innerHTML = state.upSteps.map((st,i) => `
+    <div style="display:flex;gap:5px;margin-bottom:5px;align-items:center">
+      <div class="step-num">${i+1}</div>
+      <input class="form-input" style="flex:1" placeholder="步骤描述" value="${st}" onchange="upStepChange(${i},this.value)">
+      <span style="width:30px;height:36px;display:flex;align-items:center;justify-content:center;color:var(--c-red);font-size:18px;cursor:pointer" onclick="delUpStep(${i})">×</span>
+    </div>
+  `).join('');
+}
+
+function pickUpCat(cat) { state.upCategory = cat; renderUploadForm(); }
+function addUpCategory() {
+  const name = document.getElementById('up-newcat').value.trim();
+  if (!name) return;
+  if (!state.categories.includes(name)) state.categories.push(name);
+  state.upCategory = name;
+  document.getElementById('up-newcat').value = '';
+  renderUploadForm();
+}
+function upIngChange(i, field, val) { state.upIngs[i][field] = val; }
+function delUpIng(i) { if(state.upIngs.length<=1)return; state.upIngs.splice(i,1); renderUploadForm(); }
+function addUpIng() { state.upIngs.push({name:'',amount:''}); renderUploadForm(); }
+function upStepChange(i, val) { state.upSteps[i] = val; }
+function delUpStep(i) { if(state.upSteps.length<=1)return; state.upSteps.splice(i,1); renderUploadForm(); }
+function addUpStep() { state.upSteps.push(''); renderUploadForm(); }
+
+async function saveRecipe() {
+  const name = document.getElementById('up-name').value.trim();
+  const time = document.getElementById('up-time').value;
+  const diff = document.getElementById('up-diff').value.trim() || '简单';
+  const serv = document.getElementById('up-serv').value.trim() || '2人份';
+  if (!name) { toast('请输入菜名'); return; }
+  if (!state.upCategory) { toast('请选择或新建分类'); return; }
+  const ings = state.upIngs.filter(i => i.name.trim());
+  if (ings.length === 0) { toast('请添加食材'); return; }
+  const steps = state.upSteps.filter(s => s.trim());
+  if (steps.length === 0) { toast('请添加步骤'); return; }
+
+  const rid = state.upId || Date.now();
+  const recipeData = {
+    id: rid,
+    user_id: state.currentUser.userId,
+    name, category: state.upCategory,
+    cover_image: state.upCoverImage || null,
+    cook_time: time || '',
+    difficulty: diff, servings: serv,
+    ingredients: ings, steps
+  };
+
+  // Save locally cached image
+  if (state.upCoverImage) await saveImage('recipe_' + rid, state.upCoverImage);
+
+  let error;
+  if (state.upId) {
+    const { error: e } = await sb.from('recipes').update(recipeData).eq('id', rid);
+    error = e;
+  } else {
+    const { error: e } = await sb.from('recipes').insert(recipeData);
+    error = e;
+  }
+
+  if (error) { toast('保存失败：' + error.message); return; }
+
+  toast(state.upId ? '菜谱已更新' : '菜谱已发布');
+  await reloadState();
+  renderAll();
+  switchScreen('screen-main');
+}
+
+async function deleteRecipe() {
+  if (!state.upId) return;
+  await sb.from('recipes').delete().eq('id', state.upId);
+  await deleteImage('recipe_' + state.upId);
+  toast('菜谱已删除');
+  await reloadState();
+  renderAll();
+  switchScreen('screen-main');
+}
+
+// ==================== FRIEND RECIPES ====================
+async function goFriendRecipes(fid, fname) {
+  state.friendRecipesId = fid; state.friendRecipesName = fname; state.frActiveCat = '全部';
+  const { data } = await sb.from('recipes').select('*').eq('user_id', fid).order('created_at', { ascending: false });
+  state.frRecipes = (data || []).map(r => ({
+    id: r.id, name: r.name, coverEmoji: '🍳', category: r.category,
+    time: r.cook_time||'', difficulty: r.difficulty||'简单',
+    ingredients: r.ingredients||[], steps: r.steps||[], coverImage: r.cover_image||null
+  }));
+  document.getElementById('fr-title').textContent = fname + ' 的菜谱';
+  renderFriendRecipes();
+  switchScreen('screen-friend-recipes');
+}
+
+async function renderFriendRecipes() {
+  const cats = ['全部', ...new Set(state.frRecipes.map(r => r.category))];
+  document.getElementById('fr-cat-bar').innerHTML = cats.map(c =>
+    `<span class="chip ${state.frActiveCat===c?'active':''}" onclick="setFRCat('${c}')">${c}</span>`
+  ).join('');
+  const filtered = state.frActiveCat === '全部' ? state.frRecipes : state.frRecipes.filter(r => r.category === state.frActiveCat);
+  const list = document.getElementById('fr-recipe-list');
+  const bgMap = { '荤菜':'#FAECE7','素菜':'#EAF3DE','甜品':'#FBEAF0','汤羹':'#FBE7D3','主食':'#F1EFE8' };
+  if (filtered.length === 0) {
+    list.innerHTML = '<div class="empty"><div class="empty-icon">🍽</div><div class="empty-text">TA还没有发布菜谱</div></div>';
+    return;
+  }
+  let html = '';
+  for (const r of filtered) {
+    let imgHTML;
+    if (r.coverImage) {
+      imgHTML = `<img src="${r.coverImage}" alt="">`;
+    } else {
+      const cached = await loadImage('recipe_' + r.id);
+      imgHTML = cached ? `<img src="${cached}" alt="">` : (r.coverEmoji||'🍳');
+    }
+    html += `<div class="recipe-card" onclick="goDetail(${r.id},'${state.friendRecipesId}')">
+      <div class="recipe-cover" style="background:${bgMap[r.category]||'#F1EFE8'}">${imgHTML}</div>
+      <div class="recipe-info">
+        <div class="recipe-name">${r.name}</div>
+        <div class="recipe-meta">⏱ ${r.time||'?'}分钟 · ${r.difficulty||'简单'}</div>
+      </div>
+      <span style="color:var(--c-primary);font-size:12px;font-weight:600">点菜 ›</span>
+    </div>`;
+  }
+  list.innerHTML = html;
+}
+function setFRCat(cat) { state.frActiveCat = cat; renderFriendRecipes(); }
+function backFromFriendRecipes() { switchScreen('screen-main'); }
+
+// ==================== MESSAGES ====================
+function renderMessages() {
+  const filters = [{label:'全部',v:'all'},{label:'点菜心愿',v:'order'},{label:'好友',v:'friend'}];
+  document.getElementById('msg-filter-bar').innerHTML = filters.map(f =>
+    `<span class="chip ${state.msgFilter===f.v?'active':''}" onclick="setMsgFilter('${f.v}')">${f.label}</span>`
+  ).join('');
+  const filtered = state.msgFilter === 'all' ? state.messages : state.messages.filter(m => {
+    if (state.msgFilter === 'friend') return m.type === 'friend_request' || m.type === 'friend_accepted';
+    return m.type === state.msgFilter;
+  });
+  const list = document.getElementById('msg-list');
+  if (filtered.length === 0) {
+    list.innerHTML = '<div class="empty"><div class="empty-icon">📭</div><div class="empty-text">暂无消息</div></div>';
+    return;
+  }
+  list.innerHTML = filtered.map(m => {
+    if (m.type === 'order') {
+      const isIn = m.dir === 'in';
+      return `<div class="msg-card">
+        <div class="avatar avatar-sm" style="background:${isIn?'var(--c-primary)':'var(--c-green)'};font-size:16px">${isIn?'来':'去'}</div>
+        <div class="msg-body">
+          <div class="msg-title"><b>${isIn?m.from:'你'}</b> 向 <b>${isIn?'你':m.to}</b> 点了一道 <b>${m.recipe}</b></div>
+          <div class="msg-desc">"${m.msg}"</div>
+          <div class="msg-time">${m.time}</div>
+        </div>
+      </div>`;
+    }
+    if (m.type === 'friend_request') {
+      const handled = m.status === 'accepted' || m.status === 'rejected';
+      return `<div class="msg-card">
+        <div class="avatar avatar-sm" style="background:var(--c-blue);font-size:16px">👤</div>
+        <div class="msg-body">
+          <div class="msg-title"><b>${m.from}</b> 想添加你为好友</div>
+          <div class="msg-time">${m.time}</div>
+          ${handled
+            ? `<span style="font-size:11px;color:${m.status==='accepted'?'var(--c-green)':'var(--c-red)'}">${m.status==='accepted'?'✅ 已同意':'❌ 已拒绝'}</span>`
+            : `<div class="msg-actions"><button class="btn btn-primary btn-sm" onclick="handleMsgAccept('${m.fromId}','${m.from}')">同意</button><button class="btn btn-outline btn-sm" onclick="handleMsgReject('${m.fromId}')">拒绝</button></div>`
+          }
+        </div>
+      </div>`;
+    }
+    if (m.type === 'friend_accepted') {
+      return `<div class="msg-card">
+        <div class="avatar avatar-sm" style="background:var(--c-green);font-size:16px">✅</div>
+        <div class="msg-body">
+          <div class="msg-title"><b>${m.from}</b> 同意了你的好友请求</div>
+          <div class="msg-time">${m.time}</div>
+        </div>
+      </div>`;
+    }
+    return '';
+  }).join('');
+}
+
+async function handleMsgAccept(fid, fname) {
+  const req = state.requests.find(r => r.type === 'received' && r.fromId === fid && r.status === 'pending');
+  if (req) await acceptFriendRequest(req.id, fid, fname);
+}
+async function handleMsgReject(fid) {
+  const req = state.requests.find(r => r.type === 'received' && r.fromId === fid && r.status === 'pending');
+  if (req) await rejectFriendRequest(req.id, fid);
+}
+
+function setMsgFilter(f) { state.msgFilter = f; renderMessages(); }
+
+// ==================== PROFILE ====================
+async function renderProfile() {
+  if (!state.currentUser) return;
+  const nick = state.currentUser.nickname || '用户';
+  document.getElementById('profile-name').textContent = nick;
+  document.getElementById('profile-id').textContent = state.currentUser.userId;
+  document.getElementById('stat-recipes').textContent = state.recipes.length;
+  document.getElementById('stat-friends').textContent = state.friends.length;
+  const imgData = await loadImage('avatar_' + state.currentUser.userId);
+  const imgEl = document.getElementById('profile-avatar-img');
+  const textEl = document.getElementById('profile-avatar-text');
+  if (imgData) {
+    imgEl.src = imgData; imgEl.style.display = ''; textEl.style.display = 'none';
+  } else {
+    imgEl.style.display = 'none'; textEl.style.display = ''; textEl.textContent = nick[0] || '👤';
+  }
+}
+
+function updateBadge() {
+  const badge = document.getElementById('msg-badge');
+  const count = state.messages.length;
+  if (count > 0) { badge.textContent = count > 99 ? '99+' : count; badge.classList.remove('hidden'); }
+  else { badge.classList.add('hidden'); }
+}
+
+// ==================== NAVIGATION ====================
+function switchScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  if (id === 'screen-main') { renderAll(); updateBadge(); }
+}
+function switchTab(tab) {
+  state.activeTab = tab;
+  document.querySelectorAll('.tab-page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-' + tab).classList.add('active');
+  document.querySelectorAll('.tab-item').forEach(t => t.classList.remove('active'));
+  const el = document.querySelector(`.tab-item[data-tab="${tab}"]`);
+  if (el) el.classList.add('active');
+  if (tab === 'home') renderHome();
+  if (tab === 'friends') renderFriends();
+  if (tab === 'messages') renderMessages();
+  if (tab === 'profile') renderProfile();
+}
+function renderTabBar() {
+  document.querySelectorAll('.tab-item').forEach(t => t.classList.remove('active'));
+  const active = document.querySelector(`.tab-item[data-tab="${state.activeTab}"]`);
+  if (active) active.classList.add('active');
+}
+function backToMain() { switchScreen('screen-main'); }
+
+async function reloadState() {
+  await loadAllData();
+}
+
+// ==================== AVATAR/COVER UPLOAD ====================
+async function onAvatarPicked(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const b64 = await resizeImage(file);
+    if (state.currentUser) {
+      await saveImage('avatar_' + state.currentUser.userId, b64);
+      await sb.from('profiles').update({ avatar_data: b64 }).eq('user_id', state.currentUser.userId);
+      toast('头像已更新');
+      renderProfile();
+    }
+    state.regAvatar = b64;
+    document.getElementById('reg-avatar-preview').src = b64;
+    document.getElementById('reg-avatar-preview').style.display = '';
+    document.getElementById('reg-avatar-text').style.display = 'none';
+  } catch(err) { toast('图片处理失败'); }
+  e.target.value = '';
+}
+
+async function onCoverPicked(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const b64 = await resizeImage(file);
+    state.upCoverImage = b64;
+    state.upCoverEmoji = '';
+    document.getElementById('cover-preview-img').src = b64;
+    document.getElementById('cover-preview-img').style.display = '';
+    document.getElementById('cover-preview-emoji').style.display = 'none';
+    document.getElementById('cover-pick').classList.add('has-image');
+  } catch(err) { toast('图片处理失败'); }
+  e.target.value = '';
+}
+
+function pickCoverImage() {
+  if (state.upCoverImage) {
+    if (confirm('已选择图片。点"确定"重新选择，点"取消"移除图片')) {
+      document.getElementById('cover-input').click();
+    } else {
+      state.upCoverImage = null; state.upCoverEmoji = '🍳';
+      document.getElementById('cover-preview-img').style.display = 'none';
+      document.getElementById('cover-preview-emoji').style.display = '';
+      document.getElementById('cover-preview-emoji').textContent = '🍳';
+      document.getElementById('cover-pick').classList.remove('has-image');
+    }
+  } else {
+    document.getElementById('cover-input').click();
+  }
+}
+
+// ==================== UTILS ====================
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.remove('hidden');
+  setTimeout(() => t.classList.add('hidden'), 1800);
+}
+
+// ==================== INIT ====================
+(async function init() {
+  // Always show login page
+  document.getElementById('screen-login').classList.add('active');
+  document.getElementById('screen-main').classList.remove('active');
+  // Sign out any stale session
+  await sb.auth.signOut().catch(() => {});
+})();
+
+// Disable Service Worker
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(r => r.unregister()));
+}
+</script>
+</body>
+</html>
