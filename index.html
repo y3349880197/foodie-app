@@ -30,8 +30,8 @@ body{
 body.login-locked{overflow:hidden;position:fixed;width:100%;height:100%}
 .app{width:100%;max-width:450px;min-height:100vh;background:var(--c-bg);position:relative}
 .screen{display:none;min-height:100vh;padding-bottom:120px}
-#screen-login{padding-bottom:0;overflow:hidden;overscroll-behavior:none}
-#screen-login.active{position:fixed;top:0;left:50%;transform:translateX(-50%);width:100%;max-width:450px;height:100dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;z-index:1000}
+#screen-login{padding-bottom:0;overflow:hidden;overscroll-behavior:none;background:var(--c-bg)}
+#screen-login.active{position:fixed;top:0;left:50%;transform:translateX(-50%);width:100%;max-width:450px;height:100dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;z-index:1000;background:var(--c-bg)}
 .screen.active{display:block}
 .tab-page{display:none;min-height:100vh;padding-bottom:120px}
 .tab-page.active{display:block}
@@ -88,8 +88,8 @@ body.login-locked{overflow:hidden;position:fixed;width:100%;height:100%}
 /* Recipe card */
 .recipe-card{display:flex;align-items:center;background:var(--c-card);border-radius:var(--radius);padding:10px;margin-bottom:8px;cursor:pointer;box-shadow:var(--shadow);transition:transform .1s}
 .recipe-card:active{transform:scale(.98)}
-.recipe-cover{width:80px;height:80px;border-radius:12px;flex-shrink:0;overflow:hidden;background:#F1EFE8;display:flex;align-items:center;justify-content:center;font-size:40px}
-.recipe-cover img{width:100%;height:100%;object-fit:cover}
+.recipe-cover{width:80px;height:80px;border-radius:50%;flex-shrink:0;overflow:hidden;background:#F1EFE8;display:flex;align-items:center;justify-content:center;font-size:40px}
+.recipe-cover img{width:100%;height:100%;object-fit:contain}
 .recipe-info{flex:1;margin-left:10px;min-width:0}
 .recipe-name{font-size:15px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .recipe-meta{font-size:11px;color:var(--c-text-light);margin-top:2px}
@@ -1642,6 +1642,7 @@ function clearSessionBackup() {
         document.body.classList.remove('login-locked');
         renderAll();
         requestNotifyPermission();
+        saveCredentials(creds.email, creds.password); // refresh timestamp
         return;
       }
     }
@@ -1655,6 +1656,12 @@ function clearSessionBackup() {
   const tabbar = document.getElementById('tabbar');
   if (tabbar) tabbar.style.display = 'none';
   document.body.classList.add('login-locked');
+  // Auto-fill email if saved credentials exist
+  const savedCreds = getCredentials();
+  if (savedCreds) {
+    document.getElementById('login-email').value = savedCreds.email;
+    document.getElementById('login-pass').value = savedCreds.password;
+  }
 })();
 
 // Auto-refresh session when user returns to this tab
