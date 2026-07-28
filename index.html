@@ -27,13 +27,18 @@ body{
   background:var(--c-bg);color:var(--c-text);font-size:14px;line-height:1.6;
   -webkit-font-smoothing:antialiased;overflow-x:hidden;display:flex;justify-content:center;min-height:100vh
 }
+body.login-locked{overflow:hidden;position:fixed;width:100%;height:100%}
 .app{width:100%;max-width:450px;min-height:100vh;background:var(--c-bg);position:relative}
 .screen{display:none;min-height:100vh;padding-bottom:120px}
-#screen-login{padding-bottom:0;overflow:hidden}
+#screen-login{padding-bottom:0;overflow:hidden;overscroll-behavior:none}
+#screen-login.active{position:fixed;top:0;left:50%;transform:translateX(-50%);width:100%;max-width:450px;height:100dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;z-index:1000}
 .screen.active{display:block}
 .tab-page{display:none;min-height:100vh;padding-bottom:120px}
 .tab-page.active{display:block}
 .hidden{display:none!important}
+/* Checkbox */
+.checkbox-label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--c-text-light);cursor:pointer;margin-bottom:12px}
+.checkbox-label input[type=checkbox]{width:16px;height:16px;accent-color:var(--c-primary);cursor:pointer}
 
 /* Nav */
 .navbar{position:sticky;top:0;z-index:100;background:var(--c-bg);padding:12px 14px 8px;display:flex;align-items:center;justify-content:space-between;backdrop-filter:blur(10px)}
@@ -198,6 +203,10 @@ body{
           <div class="form-label">密码</div>
           <input class="form-input" type="password" id="login-pass" placeholder="请输入密码">
         </div>
+        <label class="checkbox-label">
+          <input type="checkbox" id="remember-me" checked>
+          记住密码，30天内自动登录
+        </label>
         <button class="btn btn-primary btn-block btn-lg" id="btn-login" onclick="doLogin()">登录</button>
       </div>
       <div class="toggle-link" onclick="switchAuth('register')">还没有账号？点击注册</div>
@@ -597,8 +606,10 @@ async function doLogin() {
 
   // Persist session for long-term auto-login
   if (authData && authData.session) saveSessionBackup(authData.session);
-  // Save encrypted credentials for 30-day auto-login
-  saveCredentials(email, pass);
+  // Only save credentials if "remember me" is checked
+  if (document.getElementById('remember-me').checked) {
+    saveCredentials(email, pass);
+  }
 
   // Get profile by email — use .select() with limit instead of maybeSingle to avoid
   // silent null returns when RLS blocks authenticated role
@@ -654,7 +665,7 @@ async function doLogin() {
   document.getElementById('screen-login').classList.remove('active');
   document.getElementById('screen-main').classList.add('active');
   document.getElementById('tabbar').style.display = 'flex';
-  document.body.style.overflow = '';
+  document.body.classList.remove('login-locked');
   renderAll();
   requestNotifyPermission();
 }
@@ -675,7 +686,7 @@ async function doLogout() {
   document.getElementById('screen-main').classList.remove('active');
   document.getElementById('screen-login').classList.add('active');
   document.getElementById('tabbar').style.display = 'none';
-  document.body.style.overflow = 'hidden';
+  document.body.classList.add('login-locked');
   document.getElementById('login-email').value = '';
   document.getElementById('login-pass').value = '';
   document.getElementById('login-error').classList.add('hidden');
@@ -1380,8 +1391,12 @@ function switchScreen(id) {
   // Tabbar is fixed-position; show it only on main screen
   const tabbar = document.getElementById('tabbar');
   if (tabbar) tabbar.style.display = (id === 'screen-main') ? 'flex' : 'none';
-  // Lock scroll on login screen only; other screens may need scrolling
-  document.body.style.overflow = (id === 'screen-login') ? 'hidden' : '';
+  // Lock body scroll on login screen
+  if (id === 'screen-login') {
+    document.body.classList.add('login-locked');
+  } else {
+    document.body.classList.remove('login-locked');
+  }
   if (id === 'screen-main') { renderAll(); updateBadge(); }
 }
 function switchTab(tab) {
@@ -1596,7 +1611,7 @@ function clearSessionBackup() {
       document.getElementById('screen-main').classList.add('active');
       const tabbar = document.getElementById('tabbar');
       if (tabbar) tabbar.style.display = 'flex';
-      document.body.style.overflow = '';
+      document.body.classList.remove('login-locked');
       renderAll();
       requestNotifyPermission();
       saveSessionBackup(session);
@@ -1624,7 +1639,7 @@ function clearSessionBackup() {
         document.getElementById('screen-main').classList.add('active');
         const tb = document.getElementById('tabbar');
         if (tb) tb.style.display = 'flex';
-        document.body.style.overflow = '';
+        document.body.classList.remove('login-locked');
         renderAll();
         requestNotifyPermission();
         return;
@@ -1639,7 +1654,7 @@ function clearSessionBackup() {
   document.getElementById('screen-main').classList.remove('active');
   const tabbar = document.getElementById('tabbar');
   if (tabbar) tabbar.style.display = 'none';
-  document.body.style.overflow = 'hidden';
+  document.body.classList.add('login-locked');
 })();
 
 // Auto-refresh session when user returns to this tab
