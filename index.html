@@ -593,14 +593,44 @@ async function doLogin() {
     return;
   }
 
-  // Get profile
-  let { data: prof } = await sb.from('profiles').select('*').eq('email', email).maybeSingle();
+  // Get profile by email — use .select() with limit instead of maybeSingle to avoid
+  // silent null returns when RLS blocks authenticated role
+  let { data: profs, error: profErr } = await sb.from('profiles').select('*').eq('email', email);
+  
+  if (profErr) {
+    console.error('Profile lookup error:', profErr);
+    showError('网络异常，请重试');
+    await sb.auth.signOut();
+    return;
+  }
+  
+  let prof = profs && profs.length > 0 ? profs[0] : null;
+  
   if (!prof) {
-    // Auto-create profile if missing (e.g. registered before tables existed)
-    const userId = 'U_' + Date.now().toString(36).toUpperCase();
+    // No profile found — try to create one (should only happen for pre-table users)
     const nick = email.split('@')[0];
-    await sb.from('profiles').insert({ user_id: userId, email, nickname: nick });
-    prof = { user_id: userId, email, nickname: nick };
+    const userId = 'U_' + Date.now().toString(36).toUpperCase();
+    const { data: newProf, error: insErr } = await sb.from('profiles').insert({ user_id: userId, email, nickname: nick }).select().single();
+    if (insErr) {
+      console.error('Profile create error:', insErr);
+      // If duplicate email, the profile exists but RLS blocked the read — retry once
+      if (insErr.message.includes('duplicate') || insErr.code === '23505') {
+        const { data: retry } = await sb.from('profiles').select('*').eq('email', email);
+        if (retry && retry.length > 0) {
+          prof = retry[0];
+        } else {
+          showError('账号数据异常，请联系管理员');
+          await sb.auth.signOut();
+          return;
+        }
+      } else {
+        showError('创建资料失败：' + insErr.message);
+        await sb.auth.signOut();
+        return;
+      }
+    } else {
+      prof = newProf;
+    }
   }
 
   const cu = { email, userId: prof.user_id, nickname: prof.nickname };

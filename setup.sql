@@ -83,69 +83,85 @@ ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "anon can read all profiles" ON profiles;
 DROP POLICY IF EXISTS "anon can insert own profile" ON profiles;
 DROP POLICY IF EXISTS "anon can update own profile" ON profiles;
+DROP POLICY IF EXISTS "all can read profiles" ON profiles;
+DROP POLICY IF EXISTS "all can insert profiles" ON profiles;
+DROP POLICY IF EXISTS "all can update profiles" ON profiles;
 DROP POLICY IF EXISTS "anon can read own recipes" ON recipes;
 DROP POLICY IF EXISTS "anon can insert own recipes" ON recipes;
 DROP POLICY IF EXISTS "anon can update own recipes" ON recipes;
 DROP POLICY IF EXISTS "anon can delete own recipes" ON recipes;
+DROP POLICY IF EXISTS "all can read recipes" ON recipes;
+DROP POLICY IF EXISTS "all can insert recipes" ON recipes;
+DROP POLICY IF EXISTS "all can update recipes" ON recipes;
+DROP POLICY IF EXISTS "all can delete recipes" ON recipes;
 DROP POLICY IF EXISTS "anon can read own friends" ON friends;
 DROP POLICY IF EXISTS "anon can insert own friends" ON friends;
 DROP POLICY IF EXISTS "anon can delete own friends" ON friends;
+DROP POLICY IF EXISTS "all can read friends" ON friends;
+DROP POLICY IF EXISTS "all can insert friends" ON friends;
+DROP POLICY IF EXISTS "all can delete friends" ON friends;
 DROP POLICY IF EXISTS "anon can read own requests" ON friend_requests;
 DROP POLICY IF EXISTS "anon can insert requests" ON friend_requests;
 DROP POLICY IF EXISTS "anon can update requests" ON friend_requests;
+DROP POLICY IF EXISTS "all can read requests" ON friend_requests;
+DROP POLICY IF EXISTS "all can insert requests" ON friend_requests;
+DROP POLICY IF EXISTS "all can update requests" ON friend_requests;
 DROP POLICY IF EXISTS "anon can read own messages" ON messages;
 DROP POLICY IF EXISTS "anon can insert messages" ON messages;
 DROP POLICY IF EXISTS "anon can update messages" ON messages;
+DROP POLICY IF EXISTS "all can read messages" ON messages;
+DROP POLICY IF EXISTS "all can insert messages" ON messages;
+DROP POLICY IF EXISTS "all can update messages" ON messages;
 
--- 重建策略：profiles
-CREATE POLICY "anon can read all profiles" ON profiles
-  FOR SELECT TO anon USING (true);
+-- 重建策略：profiles (anon + authenticated)
+CREATE POLICY "all can read profiles" ON profiles
+  FOR SELECT TO anon, authenticated USING (true);
 
-CREATE POLICY "anon can insert own profile" ON profiles
-  FOR INSERT TO anon WITH CHECK (true);
+CREATE POLICY "all can insert profiles" ON profiles
+  FOR INSERT TO anon, authenticated WITH CHECK (true);
 
-CREATE POLICY "anon can update own profile" ON profiles
-  FOR UPDATE TO anon USING (true);
+CREATE POLICY "all can update profiles" ON profiles
+  FOR UPDATE TO anon, authenticated USING (true);
 
 -- 重建策略：recipes
-CREATE POLICY "anon can read own recipes" ON recipes
-  FOR SELECT TO anon USING (true);
+CREATE POLICY "all can read recipes" ON recipes
+  FOR SELECT TO anon, authenticated USING (true);
 
-CREATE POLICY "anon can insert own recipes" ON recipes
-  FOR INSERT TO anon WITH CHECK (true);
+CREATE POLICY "all can insert recipes" ON recipes
+  FOR INSERT TO anon, authenticated WITH CHECK (true);
 
-CREATE POLICY "anon can update own recipes" ON recipes
-  FOR UPDATE TO anon USING (true);
+CREATE POLICY "all can update recipes" ON recipes
+  FOR UPDATE TO anon, authenticated USING (true);
 
-CREATE POLICY "anon can delete own recipes" ON recipes
-  FOR DELETE TO anon USING (true);
+CREATE POLICY "all can delete recipes" ON recipes
+  FOR DELETE TO anon, authenticated USING (true);
 
 -- 重建策略：friends
-CREATE POLICY "anon can read own friends" ON friends
-  FOR SELECT TO anon USING (true);
+CREATE POLICY "all can read friends" ON friends
+  FOR SELECT TO anon, authenticated USING (true);
 
-CREATE POLICY "anon can insert own friends" ON friends
-  FOR INSERT TO anon WITH CHECK (true);
+CREATE POLICY "all can insert friends" ON friends
+  FOR INSERT TO anon, authenticated WITH CHECK (true);
 
-CREATE POLICY "anon can delete own friends" ON friends
-  FOR DELETE TO anon USING (true);
+CREATE POLICY "all can delete friends" ON friends
+  FOR DELETE TO anon, authenticated USING (true);
 
 -- 重建策略：friend_requests
-CREATE POLICY "anon can read own requests" ON friend_requests
-  FOR SELECT TO anon USING (true);
+CREATE POLICY "all can read requests" ON friend_requests
+  FOR SELECT TO anon, authenticated USING (true);
 
-CREATE POLICY "anon can insert requests" ON friend_requests
-  FOR INSERT TO anon WITH CHECK (true);
+CREATE POLICY "all can insert requests" ON friend_requests
+  FOR INSERT TO anon, authenticated WITH CHECK (true);
 
-CREATE POLICY "anon can update requests" ON friend_requests
-  FOR UPDATE TO anon USING (true);
+CREATE POLICY "all can update requests" ON friend_requests
+  FOR UPDATE TO anon, authenticated USING (true);
 
 -- 重建策略：messages
-CREATE POLICY "anon can read own messages" ON messages
-  FOR SELECT TO anon USING (true);
+CREATE POLICY "all can read messages" ON messages
+  FOR SELECT TO anon, authenticated USING (true);
 
-CREATE POLICY "anon can insert messages" ON messages
-  FOR INSERT TO anon WITH CHECK (true);
+CREATE POLICY "all can insert messages" ON messages
+  FOR INSERT TO anon, authenticated WITH CHECK (true);
 
-CREATE POLICY "anon can update messages" ON messages
-  FOR UPDATE TO anon USING (true);
+CREATE POLICY "all can update messages" ON messages
+  FOR UPDATE TO anon, authenticated USING (true);
