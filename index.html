@@ -981,6 +981,14 @@ async function goDetail(rid, source) {
   ).join('');
   const stepHTML = (recipe.steps||[]).map((s,i) => `<div class="step-item"><div class="step-num">${i+1}</div><div class="step-text">${s}</div></div>`).join('');
 
+  let actionBtn = '';
+  if (source !== 'self') {
+    const f = state.friends.find(x => x.id === source);
+    actionBtn = `<button class="btn btn-primary btn-block btn-lg" style="width:100%;margin-top:16px" onclick="openOrderSheet(${recipe.id},'${f?f.name:'好友'}','${source}','${recipe.name}')">🍽 点这道菜</button>`;
+  } else {
+    actionBtn = `<button class="btn btn-outline btn-block btn-lg" style="width:100%;margin-top:16px" onclick="editRecipe(${recipe.id})">✏️ 编辑菜谱</button>`;
+  }
+
   document.getElementById('detail-content').innerHTML = `
     <div class="detail-cover" style="background:${bgMap[recipe.category]||'#F1EFE8'}">
       ${imgSrc ? `<img src="${imgSrc}" alt="">` : (recipe.coverEmoji||'🍳')}
@@ -994,20 +1002,11 @@ async function goDetail(rid, source) {
     </div>
     <div class="detail-section"><h3>食材清单</h3>${ingHTML||'<div style="color:var(--c-text-light)">暂无食材</div>'}</div>
     <div class="detail-section"><h3>做法步骤</h3>${stepHTML||'<div style="color:var(--c-text-light)">暂无步骤</div>'}</div>
+    <div style="padding:12px 14px 40px">${actionBtn}</div>
   `;
 
   const old = document.getElementById('detail-bottom');
   if (old) old.remove();
-  const barDiv = document.createElement('div');
-  barDiv.className = 'bottom-bar';
-  barDiv.id = 'detail-bottom';
-  if (source !== 'self') {
-    const f = state.friends.find(x => x.id === source);
-    barDiv.innerHTML = `<button class="btn btn-primary btn-block btn-lg" onclick="openOrderSheet(${recipe.id},'${f?f.name:'好友'}','${source}','${recipe.name}')">🍽 点这道菜</button>`;
-  } else {
-    barDiv.innerHTML = `<button class="btn btn-outline btn-block btn-lg" onclick="editRecipe(${recipe.id})">✏️ 编辑菜谱</button>`;
-  }
-  document.getElementById('screen-detail').appendChild(barDiv);
   switchScreen('screen-detail');
 }
 
