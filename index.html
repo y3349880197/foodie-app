@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v15.20260729 fix: credentials not persisting - only clear on invalid password, not network error; dual localStorage+sessionStorage; modern encode/decode -->
+<!-- v16.20260729 migrate: Supabase → Cloudflare Worker + D1. All data & auth moved off Supabase. -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -13,7 +13,6 @@
 <meta name="theme-color" content="#FF6B35">
 <title>今天吃什么🤔</title><!-- v2026.07.28.1650 -->
 <link rel="manifest" href="manifest.json">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1/dist/umd/supabase.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -412,11 +411,36 @@ body.login-locked{overflow:hidden;position:fixed;width:100%;height:100%}
 </div>
 
 <script>
-// ==================== SUPABASE INIT ====================
-const sb = supabase.createClient(
-  'https://gqujsggtunjirneyvyzr.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdxdWpzZ2d0dW5qaXJuZXl2eXpyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUyMDQ3ODAsImV4cCI6MjEwMDc4MDc4MH0.5L5h2GAWWy2iLQBpoJpg_UIDsTUaVVvniDU-StecAvY'
-);
+// ==================== WORKER API CLIENT ====================
+// 🔧 部署 Worker 后把下面这行改成你的 Worker URL
+const API_BASE = 'https://YOUR_WORKER_NAME.YOUR_SUBDOMAIN.workers.dev';
+
+const TOKEN_KEY = 'foodie_api_token';
+function setToken(token) {
+  localStorage.setItem(TOKEN_KEY, token);
+  try { sessionStorage.setItem(TOKEN_KEY, token); } catch(e) {}
+}
+function getToken() {
+  let t = localStorage.getItem(TOKEN_KEY);
+  if (!t) { try { t = sessionStorage.getItem(TOKEN_KEY); } catch(e) {} }
+  return t;
+}
+function clearToken() {
+  localStorage.removeItem(TOKEN_KEY);
+  try { sessionStorage.removeItem(TOKEN_KEY); } catch(e) {}
+}
+
+async function api(path, method = 'GET', body = null) {
+  const token = getToken();
+  const headers = { 'Content-Type': 'application/json;charset=utf-8' };
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  const opts = { method, headers };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(API_BASE + path, opts);
+  const data = await res.json();
+  if (!res.ok && data.error) throw new Error(data.error);
+  return data;
+}
 
 // ==================== INDEXEDDB FOR IMAGES (local cache) ====================
 const DB_NAME = 'foodie_images_v2', DB_VER = 1;
@@ -482,43 +506,24 @@ let state = {
 // ==================== DATA LOADING ====================
 async function loadAllData() {
   if (!state.currentUser) return;
-  const uid = state.currentUser.userId;
   try {
     const [r1, r2, r3, r4] = await Promise.all([
-      sb.from('recipes').select('*').eq('user_id',uid).order('created_at',{ascending:false}),
-      sb.from('friends').select('*').eq('user_id',uid),
-      sb.from('friend_requests').select('*').or(`to_user_id.eq.${uid},from_user_id.eq.${uid}`).order('created_at',{ascending:false}),
-      sb.from('messages').select('*').eq('user_id',uid).order('created_at',{ascending:false}).limit(100)
+      api('/api/recipes'),
+      api('/api/friends'),
+      api('/api/friend-requests'),
+      api('/api/messages')
     ]);
-
-    // Check for Supabase connection errors (e.g. project paused)
-    const apiErrs = [r1.error, r2.error, r3.error, r4.error].filter(Boolean);
-    if (apiErrs.length > 0) {
-      const msgs = apiErrs.map(e => e.message||e.code||'unknown').join('; ');
-      state._apiError = msgs;
-      console.error('Supabase API errors:', apiErrs);
-      // Don't wipe existing data on transient failures
-      return;
-    }
     state._apiError = null;
 
-    state.recipes = (r1.data||[]).map(r => ({
+    state.recipes = (r1.recipes||[]).map(r => ({
       id: r.id, name: r.name, coverEmoji: '🍳', category: r.category,
-      time: r.cook_time||'', difficulty: r.difficulty||'简单', servings: r.servings||'2人份',
-      ingredients: r.ingredients||[], steps: r.steps||[], coverImage: r.cover_image||null
+      time: r.time||'', difficulty: r.difficulty||'简单', servings: r.servings||'2人份',
+      ingredients: r.ingredients||[], steps: r.steps||[], coverImage: r.coverImage||null
     }));
     state.categories = [...new Set(state.recipes.map(r => r.category))];
-    state.friends = (r2.data||[]).map(f => ({id: f.friend_id, name: f.friend_name}));
-    state.requests = (r3.data||[]).map(r => ({
-      id: r.id, type: r.to_user_id===uid?'received':'sent',
-      fromId: r.from_user_id, fromName: r.from_nickname,
-      toId: r.to_user_id, time: fmtTime(r.created_at), status: r.status
-    }));
-    state.messages = (r4.data||[]).map(m => ({
-      id: m.id, type: m.type, dir: m.dir, from: m.from_user, fromId: m.from_id,
-      to: m.to_user, toId: m.to_id, recipe: m.recipe_name, msg: m.message_text,
-      time: fmtTime(m.created_at), status: m.status
-    }));
+    state.friends = (r2.friends||[]);
+    state.requests = (r3.requests||[]);
+    state.messages = (r4.messages||[]);
     // Cache recipe cover images in IndexedDB
     for (const r of state.recipes) {
       if (r.coverImage && !(await loadImage('recipe_' + r.id))) {
@@ -568,42 +573,35 @@ async function doRegister() {
   if (!email || !email.includes('@')) { showError('请输入有效的邮箱地址'); return; }
   if (!pass || pass.length < 6) { showError('密码至少6位'); return; }
 
-  // Check if email already exists in profiles
-  const { data: existing } = await sb.from('profiles').select('email').eq('email', email).maybeSingle();
-  if (existing) { showError('该邮箱已被注册'); return; }
+  try {
+    const data = await api('/api/auth/register', 'POST', { email, password: pass, nickname: nick });
+    setToken(data.token);
+    state.currentUser = { email, userId: data.user.userId, nickname: data.user.nickname };
 
-  // Supabase Auth signup
-  const { error: authErr } = await sb.auth.signUp({ email, password: pass });
-  if (authErr) {
-    if (authErr.message.includes('already registered') || authErr.message.includes('already exists')) {
-      showError('该邮箱已被注册');
-    } else {
-      showError('注册失败：' + authErr.message);
+    // Save avatar if uploaded
+    if (state.regAvatar) {
+      await saveImage('avatar_' + data.user.userId, state.regAvatar);
+      try { await api('/api/profile', 'PUT', { nickname: nick, avatar_data: state.regAvatar }); } catch(e) {}
     }
-    return;
+    state.regAvatar = null;
+
+    document.getElementById('reg-avatar-preview').style.display = 'none';
+    document.getElementById('reg-avatar-text').style.display = '';
+    showError('');
+    
+    // Auto login after register
+    if (document.getElementById('remember-me').checked) saveCredentials(email, pass);
+    await loadAllData();
+    state.activeCategory = '全部'; state.activeTab = 'home';
+    document.getElementById('screen-login').classList.remove('active');
+    document.getElementById('screen-main').classList.add('active');
+    document.getElementById('tabbar').style.display = 'flex';
+    document.body.classList.remove('login-locked');
+    renderAll();
+    requestNotifyPermission();
+  } catch(e) {
+    showError(e.message || '注册失败，请重试');
   }
-
-  // Create profile
-  const userId = 'U_' + Date.now().toString(36).toUpperCase();
-  const { error: profErr } = await sb.from('profiles').insert({
-    user_id: userId, email: email, nickname: nick
-  });
-  if (profErr) { showError('创建资料失败：' + profErr.message); return; }
-
-  // Save avatar
-  if (state.regAvatar) {
-    await saveImage('avatar_' + userId, state.regAvatar);
-    await sb.from('profiles').update({ avatar_data: state.regAvatar }).eq('user_id', userId);
-  }
-  state.regAvatar = null;
-
-  document.getElementById('login-email').value = email;
-  document.getElementById('login-pass').value = pass;
-  document.getElementById('reg-avatar-preview').style.display = 'none';
-  document.getElementById('reg-avatar-text').style.display = '';
-  showError('');
-  toast('注册成功！请登录');
-  switchAuth('login');
 }
 
 async function doLogin() {
@@ -611,83 +609,42 @@ async function doLogin() {
   const pass = document.getElementById('login-pass').value;
   if (!email || !pass) { showError('请输入邮箱和密码'); return; }
 
-  const { data: authData, error: authErr } = await sb.auth.signInWithPassword({ email, password: pass });
-  if (authErr) {
-    if (authErr.message.includes('Invalid login')) showError('邮箱或密码错误');
-    else if (authErr.message.includes('Email not confirmed')) showError('请先确认邮箱（去Supabase后台关闭邮箱验证）');
-    else showError('登录失败：' + authErr.message);
-    return;
-  }
+  try {
+    const data = await api('/api/auth/login', 'POST', { email, password: pass });
+    setToken(data.token);
+    state.currentUser = { email, userId: data.user.userId, nickname: data.user.nickname };
 
-  // Persist session for long-term auto-login
-  if (authData && authData.session) saveSessionBackup(authData.session);
-  // Only save credentials if "remember me" is checked
-  if (document.getElementById('remember-me').checked) {
-    saveCredentials(email, pass);
-  }
-
-  // Get profile by email — use .select() with limit instead of maybeSingle to avoid
-  // silent null returns when RLS blocks authenticated role
-  let { data: profs, error: profErr } = await sb.from('profiles').select('*').eq('email', email);
-  
-  if (profErr) {
-    console.error('Profile lookup error:', profErr);
-    showError('网络异常，请重试');
-    await sb.auth.signOut();
-    return;
-  }
-  
-  let prof = profs && profs.length > 0 ? profs[0] : null;
-  
-  if (!prof) {
-    // No profile found — try to create one (should only happen for pre-table users)
-    const nick = email.split('@')[0];
-    const userId = 'U_' + Date.now().toString(36).toUpperCase();
-    const { data: newProf, error: insErr } = await sb.from('profiles').insert({ user_id: userId, email, nickname: nick }).select().single();
-    if (insErr) {
-      console.error('Profile create error:', insErr);
-      // If duplicate email, the profile exists but RLS blocked the read — retry once
-      if (insErr.message.includes('duplicate') || insErr.code === '23505') {
-        const { data: retry } = await sb.from('profiles').select('*').eq('email', email);
-        if (retry && retry.length > 0) {
-          prof = retry[0];
-        } else {
-          showError('账号数据异常，请联系管理员');
-          await sb.auth.signOut();
-          return;
-        }
-      } else {
-        showError('创建资料失败：' + insErr.message);
-        await sb.auth.signOut();
-        return;
-      }
-    } else {
-      prof = newProf;
+    // Save credentials if "remember me" is checked
+    if (document.getElementById('remember-me').checked) {
+      saveCredentials(email, pass);
     }
+
+    // Cache avatar
+    try {
+      const prof = await api('/api/profile/' + data.user.userId);
+      if (prof.profile && prof.profile.avatar_data && !(await loadImage('avatar_' + data.user.userId))) {
+        await saveImage('avatar_' + data.user.userId, prof.profile.avatar_data);
+      }
+    } catch(e) {}
+
+    await loadAllData();
+    state.activeCategory = '全部';
+    state.activeTab = 'home';
+    document.getElementById('screen-login').classList.remove('active');
+    document.getElementById('screen-main').classList.add('active');
+    document.getElementById('tabbar').style.display = 'flex';
+    document.body.classList.remove('login-locked');
+    renderAll();
+    requestNotifyPermission();
+  } catch(e) {
+    const msg = (e.message || '').toLowerCase();
+    if (msg.includes('邮箱或密码错误')) showError('邮箱或密码错误');
+    else showError('登录失败：' + (e.message || '网络异常'));
   }
-
-  const cu = { email, userId: prof.user_id, nickname: prof.nickname };
-  state.currentUser = cu;
-
-  // Cache avatar
-  if (prof.avatar_data && !(await loadImage('avatar_' + prof.user_id))) {
-    await saveImage('avatar_' + prof.user_id, prof.avatar_data);
-  }
-
-  await loadAllData();
-  state.activeCategory = '全部';
-  state.activeTab = 'home';
-  document.getElementById('screen-login').classList.remove('active');
-  document.getElementById('screen-main').classList.add('active');
-  document.getElementById('tabbar').style.display = 'flex';
-  document.body.classList.remove('login-locked');
-  renderAll();
-  requestNotifyPermission();
 }
 
 async function doLogout() {
-  await sb.auth.signOut();
-  clearSessionBackup();
+  clearToken();
   clearCredentials();
   state.currentUser = null;
   state.recipes = []; state.categories = []; state.friends = []; state.messages = []; state.requests = [];
@@ -749,10 +706,6 @@ async function renderHome() {
       <div class="empty-icon">🔌</div>
       <div class="empty-text">数据连接失败<br><span style="font-size:11px;color:var(--c-text-light)">${state._apiError}</span></div>
       <button class="btn btn-primary" style="margin-top:12px" onclick="retryLoadData()">🔄 重试</button>
-      <div style="margin-top:8px;font-size:11px;color:var(--c-text-light)">
-        如持续失败，请检查 Supabase 项目是否被暂停<br>
-        <a href="https://supabase.com/dashboard" target="_blank" style="color:var(--c-primary)">前往 Supabase 控制台恢复</a>
-      </div>
     </div>`;
     return;
   }
@@ -859,14 +812,14 @@ async function searchUser() {
   if (!q) { toast('请输入用户ID'); return; }
   if (q === state.currentUser.userId) { toast('这是你自己的ID哦'); return; }
 
-  const { data: profiles } = await sb.from('profiles').select('*').eq('user_id', q);
-
-  const resultDiv = document.getElementById('friend-search-result');
-  if (!profiles || profiles.length === 0) {
-    resultDiv.innerHTML = '<div class="empty"><div class="empty-icon">🔍</div><div class="empty-text">未找到该用户<br>请确认ID是否正确</div></div>';
+  try {
+    var profData = await api('/api/profile/' + q);
+    var found = profData.profile;
+  } catch(e) { found = null; }
+  if (!found) {
+    document.getElementById('friend-search-result').innerHTML = '<div class="empty"><div class="empty-icon">🔍</div><div class="empty-text">未找到该用户<br>请确认ID是否正确</div></div>';
     return;
   }
-  const found = profiles[0];
   
   // Check current friend/request status
   const isFriend = state.friends.some(f => f.id === q);
@@ -888,7 +841,7 @@ async function searchUser() {
     actionHTML = `<button class="btn btn-primary btn-sm" onclick="sendFriendRequest('${q}','${found.nickname}')">加好友</button>`;
   }
 
-  resultDiv.innerHTML = `
+  document.getElementById('friend-search-result').innerHTML = `
     <div class="form-label mb-16">搜索结果</div>
     <div class="friend-card" style="cursor:default">
       <div class="avatar" style="background:${clr}">
@@ -896,7 +849,7 @@ async function searchUser() {
       </div>
       <div style="flex:1;margin-left:8px">
         <div style="font-weight:600">${found.nickname}</div>
-        <div style="font-size:11px;color:var(--c-text-light)">ID: ${found.user_id}</div>
+        <div style="font-size:11px;color:var(--c-text-light)">ID: ${found.userId}</div>
       </div>
       ${actionHTML}
     </div>`;
@@ -906,64 +859,34 @@ async function sendFriendRequest(fid, fname) {
   if (state.friends.some(f => f.id === fid)) return;
   if (state.requests.some(r => r.type === 'sent' && r.toId === fid && r.status === 'pending')) return;
 
-  const { error } = await sb.from('friend_requests').insert({
-    from_user_id: state.currentUser.userId,
-    from_nickname: state.currentUser.nickname,
-    to_user_id: fid,
-    status: 'pending'
-  });
-  if (error) { toast('发送失败：' + error.message); return; }
-
-  // Send message to target
-  await sb.from('messages').insert({
-    id: Date.now(),
-    user_id: fid,
-    type: 'friend_request',
-    from_user: state.currentUser.nickname,
-    from_id: state.currentUser.userId,
-    status: 'pending'
-  });
-
-  toast('好友请求已发送给 ' + fname + '，等待对方同意');
-  await reloadState();
-  renderAll();
+  try {
+    await api('/api/friend-requests', 'POST', {
+      to_user_id: fid,
+      from_nickname: state.currentUser.nickname
+    });
+    toast('好友请求已发送给 ' + fname + '，等待对方同意');
+    await reloadState();
+    renderAll();
+  } catch(e) { toast('发送失败：' + e.message); }
 }
 
 async function acceptFriendRequest(reqId, fid, fname) {
-  // Update request status
-  await sb.from('friend_requests').update({ status: 'accepted' }).eq('id', reqId);
-
-  // Add friend for me
-  const { error: e1 } = await sb.from('friends').upsert({
-    user_id: state.currentUser.userId, friend_id: fid, friend_name: fname
-  }, { onConflict: 'user_id,friend_id' });
-  if (e1) console.error('add friend error', e1);
-
-  // Add friend for them (I become their friend)
-  await sb.from('friends').upsert({
-    user_id: fid, friend_id: state.currentUser.userId, friend_name: state.currentUser.nickname
-  }, { onConflict: 'user_id,friend_id' });
-
-  // Notify them
-  await sb.from('messages').insert({
-    id: Date.now(),
-    user_id: fid,
-    type: 'friend_accepted',
-    from_user: state.currentUser.nickname,
-    from_id: state.currentUser.userId
-  });
-
-  toast('已和 ' + fname + ' 成为好友！');
-  sendNotify('好友请求已通过', fname + ' 同意了你的好友请求');
-  await reloadState();
-  renderAll();
+  try {
+    await api('/api/friend-requests/' + reqId, 'PUT', { status: 'accepted' });
+    toast('已和 ' + fname + ' 成为好友！');
+    sendNotify('好友请求已通过', fname + ' 同意了你的好友请求');
+    await reloadState();
+    renderAll();
+  } catch(e) { toast('操作失败：' + e.message); }
 }
 
 async function rejectFriendRequest(reqId, fid) {
-  await sb.from('friend_requests').update({ status: 'rejected' }).eq('id', reqId);
-  toast('已拒绝请求');
-  await reloadState();
-  renderAll();
+  try {
+    await api('/api/friend-requests/' + reqId, 'PUT', { status: 'rejected' });
+    toast('已拒绝请求');
+    await reloadState();
+    renderAll();
+  } catch(e) { toast('操作失败：' + e.message); }
 }
 
 // ==================== RECIPE DETAIL ====================
@@ -981,11 +904,11 @@ async function goDetail(rid, source) {
     }
     // If we don't have cached recipes, need to fetch
     if (!recipe) {
-      const { data } = await sb.from('recipes').select('*').eq('user_id', source);
-      const recipes = (data||[]).map(r => ({
+      const data = await api('/api/recipes/user/' + source);
+      const recipes = (data.recipes||[]).map(r => ({
         id: r.id, name: r.name, coverEmoji: '🍳', category: r.category,
-        time: r.cook_time||'', difficulty: r.difficulty||'简单', servings: r.servings||'2人份',
-        ingredients: r.ingredients||[], steps: r.steps||[], coverImage: r.cover_image||null
+        time: r.time||'', difficulty: r.difficulty||'简单', servings: r.servings||'2人份',
+        ingredients: r.ingredients||[], steps: r.steps||[], coverImage: r.coverImage||null
       }));
       recipe = recipes.find(r => String(r.id) === String(rid));
       // Cache in state
@@ -1059,34 +982,23 @@ async function confirmOrder() {
   const msg = document.getElementById('order-msg').value.trim() || '想吃！';
   const fid = state.orderingFriendId;
   const rname = document.getElementById('order-recipe-name').textContent.split('「')[1]?.replace('」','') || '';
-  const now = Date.now();
 
-  // Save to my messages
-  const { error: e1 } = await sb.from('messages').insert({
-    id: now, user_id: state.currentUser.userId,
-    type: 'order', dir: 'out',
-    from_user: state.currentUser.nickname, from_id: state.currentUser.userId,
-    to_user: state.orderingFriend, to_id: fid,
-    recipe_name: rname, message_text: msg
-  });
-  
-  // Save to friend's messages
-  await sb.from('messages').insert({
-    id: now + 1, user_id: fid,
-    type: 'order', dir: 'in',
-    from_user: state.currentUser.nickname, from_id: state.currentUser.userId,
-    to_user: state.orderingFriend, to_id: fid,
-    recipe_name: rname, message_text: msg
-  });
+  try {
+    await api('/api/messages', 'POST', {
+      type: 'order', dir: 'out',
+      from: state.currentUser.nickname, fromId: state.currentUser.userId,
+      to: state.orderingFriend, toId: fid,
+      recipe: rname, msg: msg,
+      user_id: state.currentUser.userId
+    });
 
-  if (e1) { toast('发送失败：' + e1.message); return; }
-
-  toast('心愿卡已发送给 ' + state.orderingFriend + '！');
-  sendNotify('有人点菜啦！🍽', state.currentUser.nickname + ' 想让你做' + rname);
-  closeOrderSheet();
-  await reloadState();
-  renderMessages();
-  updateBadge();
+    toast('心愿卡已发送给 ' + state.orderingFriend + '！');
+    sendNotify('有人点菜啦！🍽', state.currentUser.nickname + ' 想让你做' + rname);
+    closeOrderSheet();
+    await reloadState();
+    renderMessages();
+    updateBadge();
+  } catch(e) { toast('发送失败：' + e.message); }
 }
 
 // ==================== UPLOAD ====================
@@ -1209,22 +1121,24 @@ async function saveRecipe() {
   };
 
   try {
-    // Save image to IndexedDB (non-blocking for Supabase)
+    // Save image to IndexedDB
     if (state.upCoverImage) await saveImage('recipe_' + rid, state.upCoverImage);
 
-    // Save to Supabase
-    let error;
+    // Save to API
     if (state.upId) {
-      const { error: e } = await sb.from('recipes').update(recipeData).eq('id', rid);
-      error = e;
+      await api('/api/recipes/' + rid, 'PUT', {
+        name, category: state.upCategory,
+        cover_image: state.upCoverImage || null,
+        cook_time: time || '', difficulty: diff, servings: serv,
+        ingredients: ings, steps
+      });
     } else {
-      const { error: e } = await sb.from('recipes').insert(recipeData);
-      error = e;
-    }
-
-    if (error) {
-      toast('保存失败：' + error.message);
-      return;
+      await api('/api/recipes', 'POST', {
+        id: rid, name, category: state.upCategory,
+        cover_image: state.upCoverImage || null,
+        cook_time: time || '', difficulty: diff, servings: serv,
+        ingredients: ings, steps
+      });
     }
 
     // Immediately update local state (don't rely on server reload which might fail & wipe data)
@@ -1263,7 +1177,7 @@ async function saveRecipe() {
 async function deleteRecipe() {
   if (!state.upId) return;
   try {
-    await sb.from('recipes').delete().eq('id', state.upId);
+    await api('/api/recipes/' + state.upId, 'DELETE');
     await deleteImage('recipe_' + state.upId);
     // Remove from local state immediately
     state.recipes = state.recipes.filter(r => String(r.id) !== String(state.upId));
@@ -1281,13 +1195,13 @@ async function deleteRecipe() {
 async function goFriendRecipes(fid, fname) {
   state.friendRecipesId = fid; state.friendRecipesName = fname; state.frActiveCat = '全部';
   try {
-    const { data, error } = await sb.from('recipes').select('*').eq('user_id', fid).order('created_at', { ascending: false });
-    if (error) { toast('加载好友菜谱失败'); state.frRecipes = []; state.frApiError = error.message; }
-    else { state.frRecipes = (data || []).map(r => ({
+    const data = await api('/api/recipes/user/' + fid);
+    state.frRecipes = (data.recipes||[]).map(r => ({
       id: r.id, name: r.name, coverEmoji: '🍳', category: r.category,
-      time: r.cook_time||'', difficulty: r.difficulty||'简单',
-      ingredients: r.ingredients||[], steps: r.steps||[], coverImage: r.cover_image||null
-    })); state.frApiError = null; }
+      time: r.time||'', difficulty: r.difficulty||'简单',
+      ingredients: r.ingredients||[], steps: r.steps||[], coverImage: r.coverImage||null
+    }));
+    state.frApiError = null;
   } catch(e) {
     state.frRecipes = []; state.frApiError = e.message;
     toast('网络异常，请重试');
@@ -1446,13 +1360,13 @@ async function saveProfile() {
     await saveImage('avatar_' + state.currentUser.userId, state.regAvatar);
   }
 
-  const { error } = await sb.from('profiles').update(updateData).eq('user_id', state.currentUser.userId);
-  if (error) { toast('保存失败：' + error.message); return; }
-
-  state.currentUser.nickname = nick;
-  toast('资料已更新');
-  closeEditProfile();
-  renderProfile();
+  try {
+    await api('/api/profile', 'PUT', updateData);
+    state.currentUser.nickname = nick;
+    toast('资料已更新');
+    closeEditProfile();
+    renderProfile();
+  } catch(e) { toast('保存失败：' + e.message); }
 }
 
 function updateBadge() {
@@ -1535,7 +1449,7 @@ async function onAvatarPicked(e) {
     // If logged in, update profile avatar immediately
     if (state.currentUser) {
       await saveImage('avatar_' + state.currentUser.userId, b64);
-      await sb.from('profiles').update({ avatar_data: b64 }).eq('user_id', state.currentUser.userId);
+      try { await api('/api/profile', 'PUT', { nickname: state.currentUser.nickname, avatar_data: b64 }); } catch(e) {}
       renderProfile();
     }
   } catch(err) { toast('图片处理失败'); }
@@ -1635,94 +1549,28 @@ function clearCredentials() {
   try { sessionStorage.removeItem(CREDS_KEY); } catch(e) {}
 }
 
-// ==================== SESSION BACKUP (survives aggressive storage cleanup) ====================
-const SESSION_BACKUP_KEY = 'foodie_session_backup';
-function saveSessionBackup(session) {
-  try { if (session) localStorage.setItem(SESSION_BACKUP_KEY, JSON.stringify(session)); }
-  catch(e) {}
-}
-function loadSessionBackup() {
-  try {
-    const raw = localStorage.getItem(SESSION_BACKUP_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch(e) { return null; }
-}
-function clearSessionBackup() {
-  try { localStorage.removeItem(SESSION_BACKUP_KEY); }
-  catch(e) {}
-}
-
 // ==================== INIT ====================
 (async function init() {
-  // Try to restore existing session from localStorage
-  let { data: { session } } = await sb.auth.getSession();
-
-  // If Supabase's own storage was cleared (e.g. browser cleanup), try our backup
-  if (!session) {
-    const backup = loadSessionBackup();
-    if (backup && backup.refresh_token) {
-      try {
-        const { data: restored, error: restoreErr } = await sb.auth.setSession({
-          access_token: backup.access_token || '',
-          refresh_token: backup.refresh_token
-        });
-        if (!restoreErr && restored.session) session = restored.session;
-      } catch(e) {}
-    }
-  }
-  
-  // Session exists in storage — try to refresh the access token
-  // (access token expires in 1h, but refresh token lasts much longer)
-  if (session) {
+  // Try auto-login with stored token
+  const token = getToken();
+  if (token) {
     try {
-      const { data: refreshed, error: refreshErr } = await sb.auth.refreshSession();
-      if (!refreshErr && refreshed.session) {
-        session = refreshed.session;
+      const data = await api('/api/auth/me');
+      if (data && data.user) {
+        state.currentUser = data.user;
+        await loadAllData();
+        state.activeCategory = '全部';
+        state.activeTab = 'home';
+        document.getElementById('screen-main').classList.add('active');
+        document.getElementById('tabbar').style.display = 'flex';
+        document.body.classList.remove('login-locked');
+        renderAll();
+        requestNotifyPermission();
+        return;
       }
     } catch(e) {
-      // Refresh failed silently — will try with the stored session below
-    }
-  }
-  
-  if (session && session.user) {
-    const email = session.user.email;
-    
-    // Try to load profile with current (possibly refreshed) session
-    let { data: profs, error: profErr } = await sb.from('profiles').select('*').eq('email', email);
-    
-    // If query failed due to auth, try one more refresh then retry
-    if (profErr) {
-      try {
-        const { data: refreshed } = await sb.auth.refreshSession();
-        if (refreshed.session) {
-          session = refreshed.session;
-          const retry = await sb.from('profiles').select('*').eq('email', email);
-          if (!retry.error) { profs = retry.data; profErr = null; }
-        }
-      } catch(e) {}
-    }
-    
-    if (!profErr && profs && profs.length > 0) {
-      const prof = profs[0];
-      const cu = { email, userId: prof.user_id, nickname: prof.nickname };
-      state.currentUser = cu;
-      
-      // Cache avatar
-      if (prof.avatar_data && !(await loadImage('avatar_' + prof.user_id))) {
-        await saveImage('avatar_' + prof.user_id, prof.avatar_data);
-      }
-      
-      await loadAllData();
-      state.activeCategory = '全部';
-      state.activeTab = 'home';
-      document.getElementById('screen-main').classList.add('active');
-      const tabbar = document.getElementById('tabbar');
-      if (tabbar) tabbar.style.display = 'flex';
-      document.body.classList.remove('login-locked');
-      renderAll();
-      requestNotifyPermission();
-      saveSessionBackup(session);
-      return; // Auto-login success, skip login screen
+      // Token expired or invalid — clear and try credential re-login
+      clearToken();
     }
   }
 
@@ -1730,49 +1578,30 @@ function clearSessionBackup() {
   const creds = getCredentials();
   if (creds) {
     try {
-      const { data: reAuth, error: reErr } = await sb.auth.signInWithPassword({ email: creds.email, password: creds.password });
-      if (reErr) {
-        // Only clear credentials if the password is actually wrong,
-        // NOT on network errors (Supabase paused, switching networks, etc.)
-        const msg = (reErr.message || '').toLowerCase();
-        if (msg.includes('invalid login') || msg.includes('invalid credentials')) {
-          clearCredentials();
-        }
-        // On network/temporary errors: keep credentials, fall through to login page
-      } else if (reAuth && reAuth.session) {
-        saveSessionBackup(reAuth.session);
-        const email = creds.email;
-        let { data: profs } = await sb.from('profiles').select('*').eq('email', email);
-        if (profs && profs.length > 0) {
-          const prof = profs[0];
-          state.currentUser = { email, userId: prof.user_id, nickname: prof.nickname };
-          if (prof.avatar_data && !(await loadImage('avatar_' + prof.user_id))) {
-            await saveImage('avatar_' + prof.user_id, prof.avatar_data);
-          }
-          await loadAllData();
-          state.activeCategory = '全部';
-          state.activeTab = 'home';
-          document.getElementById('screen-main').classList.add('active');
-          const tb = document.getElementById('tabbar');
-          if (tb) tb.style.display = 'flex';
-          document.body.classList.remove('login-locked');
-          renderAll();
-          requestNotifyPermission();
-          saveCredentials(creds.email, creds.password); // refresh timestamp
-          return;
-        }
-        // Auth succeeded but profile not found — keep credentials, show login
-      }
+      const data = await api('/api/auth/login', 'POST', { email: creds.email, password: creds.password });
+      setToken(data.token);
+      state.currentUser = data.user;
+      saveCredentials(creds.email, creds.password); // refresh timestamp
+      await loadAllData();
+      state.activeCategory = '全部';
+      state.activeTab = 'home';
+      document.getElementById('screen-main').classList.add('active');
+      document.getElementById('tabbar').style.display = 'flex';
+      document.body.classList.remove('login-locked');
+      renderAll();
+      requestNotifyPermission();
+      return;
     } catch(e) {
-      // Network/temporary error — keep credentials, fall through to login page
+      const msg = (e.message || '').toLowerCase();
+      if (msg.includes('邮箱或密码错误')) clearCredentials();
+      // Network errors: keep credentials
     }
   }
 
-  // No valid session — show login page and hide tabbar
+  // No valid session — show login page
   document.getElementById('screen-login').classList.add('active');
   document.getElementById('screen-main').classList.remove('active');
-  const tabbar = document.getElementById('tabbar');
-  if (tabbar) tabbar.style.display = 'none';
+  document.getElementById('tabbar').style.display = 'none';
   document.body.classList.add('login-locked');
   // Auto-fill email+password if saved credentials exist
   const savedCreds = getCredentials();
@@ -1782,16 +1611,6 @@ function clearSessionBackup() {
     document.getElementById('remember-me').checked = true;
   }
 })();
-
-// Auto-refresh session when user returns to this tab
-document.addEventListener('visibilitychange', async () => {
-  if (document.visibilityState === 'visible' && state.currentUser) {
-    try {
-      const { data } = await sb.auth.refreshSession();
-      if (data && data.session) saveSessionBackup(data.session);
-    } catch(e) {}
-  }
-});
 
 // Disable Service Worker
 if ('serviceWorker' in navigator) {
