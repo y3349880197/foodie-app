@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v14.20260728 fix: saveRecipe crash when supabase unavailable, local state first, try-catch prevent data wipe -->
+<!-- v15.20260729 fix: credentials not persisting - only clear on invalid password, not network error; dual localStorage+sessionStorage; modern encode/decode -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -1584,32 +1584,55 @@ function toast(msg) {
 const CREDS_KEY = 'foodie_longterm_auth';
 const CREDS_DURATION = 30 * 24 * 60 * 60 * 1000; // 30 days in ms
 
+function _encode(str) {
+  // Modern replacement for deprecated unescape/escape
+  const bytes = new TextEncoder().encode(str);
+  let binary = '';
+  bytes.forEach(b => binary += String.fromCharCode(b));
+  return btoa(binary);
+}
+function _decode(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
 function saveCredentials(email, password) {
   try {
-    const data = btoa(unescape(encodeURIComponent(email + ':::' + password)));
+    const data = _encode(email + ':::' + password);
     const payload = { d: data, t: Date.now() };
-    localStorage.setItem(CREDS_KEY, JSON.stringify(payload));
+    const str = JSON.stringify(payload);
+    // Dual-write: localStorage (persistent) + sessionStorage (survives tab close)
+    localStorage.setItem(CREDS_KEY, str);
+    try { sessionStorage.setItem(CREDS_KEY, str); } catch(e) {}
   } catch(e) {}
 }
 
 function getCredentials() {
   try {
-    const raw = localStorage.getItem(CREDS_KEY);
+    // Try localStorage first, fall back to sessionStorage
+    let raw = localStorage.getItem(CREDS_KEY);
+    if (!raw) { try { raw = sessionStorage.getItem(CREDS_KEY); } catch(e) {} }
     if (!raw) return null;
     const payload = JSON.parse(raw);
     if (Date.now() - payload.t > CREDS_DURATION) {
       clearCredentials();
       return null;
     }
-    const decoded = decodeURIComponent(escape(atob(payload.d)));
+    const decoded = _decode(payload.d);
     const sep = decoded.indexOf(':::');
     if (sep < 0) return null;
-    return { email: decoded.substring(0, sep), password: decoded.substring(sep + 3) };
+    const creds = { email: decoded.substring(0, sep), password: decoded.substring(sep + 3) };
+    // Sync back to localStorage if only found in sessionStorage
+    try { if (!localStorage.getItem(CREDS_KEY)) localStorage.setItem(CREDS_KEY, raw); } catch(e) {}
+    return creds;
   } catch(e) { return null; }
 }
 
 function clearCredentials() {
   try { localStorage.removeItem(CREDS_KEY); } catch(e) {}
+  try { sessionStorage.removeItem(CREDS_KEY); } catch(e) {}
 }
 
 // ==================== SESSION BACKUP (survives aggressive storage cleanup) ====================
@@ -1706,32 +1729,43 @@ function clearSessionBackup() {
   // ===== LAST RESORT: silent re-login with stored credentials (30-day validity) =====
   const creds = getCredentials();
   if (creds) {
-    const { data: reAuth, error: reErr } = await sb.auth.signInWithPassword({ email: creds.email, password: creds.password });
-    if (!reErr && reAuth.session) {
-      saveSessionBackup(reAuth.session);
-      const email = creds.email;
-      let { data: profs } = await sb.from('profiles').select('*').eq('email', email);
-      if (profs && profs.length > 0) {
-        const prof = profs[0];
-        state.currentUser = { email, userId: prof.user_id, nickname: prof.nickname };
-        if (prof.avatar_data && !(await loadImage('avatar_' + prof.user_id))) {
-          await saveImage('avatar_' + prof.user_id, prof.avatar_data);
+    try {
+      const { data: reAuth, error: reErr } = await sb.auth.signInWithPassword({ email: creds.email, password: creds.password });
+      if (reErr) {
+        // Only clear credentials if the password is actually wrong,
+        // NOT on network errors (Supabase paused, switching networks, etc.)
+        const msg = (reErr.message || '').toLowerCase();
+        if (msg.includes('invalid login') || msg.includes('invalid credentials')) {
+          clearCredentials();
         }
-        await loadAllData();
-        state.activeCategory = '全部';
-        state.activeTab = 'home';
-        document.getElementById('screen-main').classList.add('active');
-        const tb = document.getElementById('tabbar');
-        if (tb) tb.style.display = 'flex';
-        document.body.classList.remove('login-locked');
-        renderAll();
-        requestNotifyPermission();
-        saveCredentials(creds.email, creds.password); // refresh timestamp
-        return;
+        // On network/temporary errors: keep credentials, fall through to login page
+      } else if (reAuth && reAuth.session) {
+        saveSessionBackup(reAuth.session);
+        const email = creds.email;
+        let { data: profs } = await sb.from('profiles').select('*').eq('email', email);
+        if (profs && profs.length > 0) {
+          const prof = profs[0];
+          state.currentUser = { email, userId: prof.user_id, nickname: prof.nickname };
+          if (prof.avatar_data && !(await loadImage('avatar_' + prof.user_id))) {
+            await saveImage('avatar_' + prof.user_id, prof.avatar_data);
+          }
+          await loadAllData();
+          state.activeCategory = '全部';
+          state.activeTab = 'home';
+          document.getElementById('screen-main').classList.add('active');
+          const tb = document.getElementById('tabbar');
+          if (tb) tb.style.display = 'flex';
+          document.body.classList.remove('login-locked');
+          renderAll();
+          requestNotifyPermission();
+          saveCredentials(creds.email, creds.password); // refresh timestamp
+          return;
+        }
+        // Auth succeeded but profile not found — keep credentials, show login
       }
+    } catch(e) {
+      // Network/temporary error — keep credentials, fall through to login page
     }
-    // Credential re-login failed — credentials may be stale, clear them
-    clearCredentials();
   }
 
   // No valid session — show login page and hide tabbar
@@ -1740,11 +1774,12 @@ function clearSessionBackup() {
   const tabbar = document.getElementById('tabbar');
   if (tabbar) tabbar.style.display = 'none';
   document.body.classList.add('login-locked');
-  // Auto-fill email if saved credentials exist
+  // Auto-fill email+password if saved credentials exist
   const savedCreds = getCredentials();
   if (savedCreds) {
     document.getElementById('login-email').value = savedCreds.email;
     document.getElementById('login-pass').value = savedCreds.password;
+    document.getElementById('remember-me').checked = true;
   }
 })();
 
