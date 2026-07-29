@@ -307,6 +307,12 @@ async function handleRequest(request, env) {
     } catch (e) { return err('搜索失败: ' + e.message, 500); }
   }
 
+  // ==================== MIGRATION (one-time use) ====================
+  if (path === '/api/admin/migrate' && method === 'POST') {
+    if (body.key !== 'foodie-migrate-2026') return err('Unauthorized', 403);
+    return handleMigrate(body, env);
+  }
+
   return err('Not found', 404);
 }
 
@@ -357,6 +363,84 @@ function mapRecipe(r) {
     steps: typeof r.steps === 'string' ? JSON.parse(r.steps) : (r.steps || []),
     coverImage: r.cover_image || null
   };
+}
+
+async function handleMigrate(body, env) {
+  const { users, recipes, friends, friend_requests, messages } = body;
+  const results = { users: 0, recipes: 0, friends: 0, friend_requests: 0, messages: 0, errors: [] };
+
+  try {
+    // Migrate users
+    if (users && Array.isArray(users)) {
+      for (const u of users) {
+        try {
+          const salt = crypto.randomUUID();
+          const hash = await hashPassword('migrate123456', salt);
+          await env.DB.prepare(
+            'INSERT OR IGNORE INTO profiles (user_id, email, nickname, avatar_data, password_hash, password_salt, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+          ).bind(u.user_id, u.email, u.nickname, u.avatar_data || null, hash, salt, u.created_at || new Date().toISOString()).run();
+          results.users++;
+        } catch (e) { results.errors.push('user:' + u.user_id + ' - ' + e.message); }
+      }
+    }
+
+    // Migrate recipes
+    if (recipes && Array.isArray(recipes)) {
+      for (const r of recipes) {
+        try {
+          await env.DB.prepare(
+            'INSERT OR IGNORE INTO recipes (id, user_id, name, category, cover_image, cook_time, difficulty, servings, ingredients, steps, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+          ).bind(
+            r.id, r.user_id, r.name, r.category || '', r.cover_image || null,
+            r.cook_time || '', r.difficulty || '简单', r.servings || '2人份',
+            JSON.stringify(r.ingredients || []), JSON.stringify(r.steps || []),
+            r.created_at || new Date().toISOString()
+          ).run();
+          results.recipes++;
+        } catch (e) { results.errors.push('recipe:' + r.id + ' - ' + e.message); }
+      }
+    }
+
+    // Migrate friends
+    if (friends && Array.isArray(friends)) {
+      for (const f of friends) {
+        try {
+          await env.DB.prepare('INSERT OR IGNORE INTO friends (user_id, friend_id, friend_name) VALUES (?, ?, ?)')
+            .bind(f.user_id, f.friend_id, f.friend_name || '').run();
+          results.friends++;
+        } catch (e) { results.errors.push('friend:' + f.user_id + '-' + f.friend_id + ' - ' + e.message); }
+      }
+    }
+
+    // Migrate friend_requests
+    if (friend_requests && Array.isArray(friend_requests)) {
+      for (const fr of friend_requests) {
+        try {
+          await env.DB.prepare('INSERT OR IGNORE INTO friend_requests (id, from_user_id, to_user_id, from_nickname, status, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+            .bind(fr.id, fr.from_user_id, fr.to_user_id, fr.from_nickname || '', fr.status || 'pending', fr.created_at || new Date().toISOString()).run();
+          results.friend_requests++;
+        } catch (e) { results.errors.push('req:' + fr.id + ' - ' + e.message); }
+      }
+    }
+
+    // Migrate messages
+    if (messages && Array.isArray(messages)) {
+      for (const m of messages) {
+        try {
+          await env.DB.prepare(
+            'INSERT OR IGNORE INTO messages (id, user_id, type, dir, from_user, from_id, to_user, to_id, recipe_name, message_text, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+          ).bind(m.id, m.user_id, m.type || 'order', m.dir || 'sent', m.from_user || '', m.from_id || '',
+                 m.to_user || '', m.to_id || '', m.recipe_name || '', m.message_text || '',
+                 m.status || 'unread', m.created_at || new Date().toISOString()).run();
+          results.messages++;
+        } catch (e) { results.errors.push('msg:' + m.id + ' - ' + e.message); }
+      }
+    }
+
+    return json({ ok: true, results });
+  } catch (e) {
+    return err('Migration failed: ' + e.message, 500);
+  }
 }
 
 export default {
