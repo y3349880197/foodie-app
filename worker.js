@@ -16,18 +16,39 @@ function json(data, status = 200) {
 
 function err(msg, status = 400) { return json({ error: msg }, status); }
 
+// ==================== BASE64 HELPERS (Cloudflare Workers safe) ====================
+// btoa() in Workers only accepts Latin1. Must encode UTF-8 -> binary string first.
+function utf8ToBase64Url(str) {
+  const bytes = new TextEncoder().encode(str);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+function base64UrlToUtf8(b64url) {
+  const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+function bufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
 // ==================== JWT ====================
 async function signJWT(payload) {
   const header = { alg: 'HS256', typ: 'JWT' };
   const now = Math.floor(Date.now() / 1000);
   const fullPayload = { ...payload, iat: now, exp: now + 7 * 24 * 3600 }; // 7 days
-  const enc = (obj) => btoa(JSON.stringify(obj)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-  const headerStr = enc(header);
-  const payloadStr = enc(fullPayload);
+  const headerStr = utf8ToBase64Url(JSON.stringify(header));
+  const payloadStr = utf8ToBase64Url(JSON.stringify(fullPayload));
   const signingInput = headerStr + '.' + payloadStr;
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(JWT_SECRET_KEY), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(signingInput));
-  const sigStr = btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  const sigStr = bufferToBase64(sig).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
   return signingInput + '.' + sigStr;
 }
 
@@ -40,7 +61,7 @@ async function verifyJWT(token) {
     const sigBytes = Uint8Array.from(atob(parts[2].replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
     const valid = await crypto.subtle.verify('HMAC', key, sigBytes, new TextEncoder().encode(signingInput));
     if (!valid) return null;
-    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+    const payload = JSON.parse(base64UrlToUtf8(parts[1]));
     if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return null;
     return payload;
   } catch (e) { return null; }
@@ -54,7 +75,7 @@ async function hashPassword(password, salt) {
     { name: 'PBKDF2', salt: encoder.encode(salt), iterations: 100000, hash: 'SHA-256' },
     key, 256
   );
-  return btoa(String.fromCharCode(...new Uint8Array(derived)));
+  return bufferToBase64(derived);
 }
 
 async function verifyPassword(password, salt, hash) {
