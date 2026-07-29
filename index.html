@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v16.20260729 migrate: Supabase → Cloudflare Worker + D1. All data & auth moved off Supabase. -->
+<!-- v17.20260729 Cloudflare Worker+D1 complete migration. API: foodie-app.3349880197.workers.dev -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -413,7 +413,7 @@ body.login-locked{overflow:hidden;position:fixed;width:100%;height:100%}
 <script>
 // ==================== WORKER API CLIENT ====================
 // 🔧 部署 Worker 后把下面这行改成你的 Worker URL
-const API_BASE = 'https://YOUR_WORKER_NAME.YOUR_SUBDOMAIN.workers.dev';
+const API_BASE = 'https://foodie-app.3349880197.workers.dev';
 
 const TOKEN_KEY = 'foodie_api_token';
 function setToken(token) {
